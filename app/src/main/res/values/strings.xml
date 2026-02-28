@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ChillPill</string>
+    <string name="accessibility_service_description">ChillPill uses this to detect when you open apps, so it can show a short pause screen for apps not on your whitelist. No data is sent anywhere.</string>
+    <string name="open_settings">Open Settings</string>
+    <string name="enable_accessibility">Enable Accessibility Service</string>
+    <string name="enable_overlay">Grant Overlay Permission</string>
+    <string name="enable_notification">Allow notification (for timer)</string>
+    <string name="wait_message">Take a breath. You opened an app not on your list.</string>
+    <string name="continue_app">Continue to app</string>
+    <string name="close_and_go_home">Close and go home</string>
+    <string name="whitelist_title">App whitelist</string>
+    <string name="timer_seconds_title">Wait time (seconds)</string>
+    <string name="add_app">Add app to whitelist</string>
+    <string name="manage_whitelist">Manage whitelist</string>
+    <string name="select_all">Select all</string>
+    <string name="select_none">Select none</string>
+    <string name="save">Save</string>
+    <string name="search_apps">Search apps…</string>
+    <string name="remove">Remove</string>
+    <string name="seconds">%d seconds</string>
+    <string name="overlay_notification_channel">ChillPill overlay</string>
+    <string name="overlay_notification_title">ChillPill is active</string>
+</resources>
