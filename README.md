@@ -40,6 +40,8 @@ Or filter by substring: `adb logcat | findstr ChillPill` (Windows) / `adb logcat
 - **ChillPill/Main**: permission state (a11y, overlay).
 - **ChillPill/Settings**: whitelist and timer load/save.
 
+If you see **no ChillPill/A11y** logs when opening other apps: (1) ensure ChillPill is **ON** under Settings → Accessibility; (2) after updating the app, turn the service **OFF** and **ON** again; (3) use `adb logcat -s ChillPill/A11y:I` and leave it running while you open a non-whitelisted app.
+
 ## Requirements
 
 - Android 8.0 (API 26) or higher.

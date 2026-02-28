@@ -23,11 +23,11 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d(TAG, "onCreate")
+        Log.i(TAG, "onCreate")
         binding = ActivitySettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
         prefs = Prefs(this)
-        Log.d(TAG, "whitelist size=${prefs.whitelist.size} timerSeconds=${prefs.timerSeconds}")
+        Log.i(TAG, "whitelist size=${prefs.whitelist.size} timerSeconds=${prefs.timerSeconds}")
 
         binding.toolbar.setNavigationOnClickListener { finish() }
 
@@ -54,7 +54,7 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onPause() {
         saveTimerSeconds()
-        Log.d(TAG, "onPause whitelist size=${prefs.whitelist.size} timerSeconds=${prefs.timerSeconds}")
+        Log.i(TAG, "onPause whitelist size=${prefs.whitelist.size} timerSeconds=${prefs.timerSeconds}")
         super.onPause()
     }
 

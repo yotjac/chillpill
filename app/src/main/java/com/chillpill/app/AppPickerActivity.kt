@@ -1,5 +1,6 @@
 package com.chillpill.app
 
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.text.Editable
@@ -68,6 +69,7 @@ class AppPickerActivity : AppCompatActivity() {
         val pm = packageManager
         return pm.getInstalledApplications(PackageManager.GET_META_DATA)
             .filter { it.packageName != packageName }
+            .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 }
             .map { AppItem(it.packageName, it.loadLabel(pm).toString(), it.loadIcon(pm)) }
             .sortedBy { it.label.lowercase() }
     }

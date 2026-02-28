@@ -1,6 +1,8 @@
 package com.chillpill.app
 
+import android.content.pm.ApplicationInfo
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -17,28 +19,32 @@ class AppDetectionAccessibilityService : AccessibilityService() {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString()
         val className = event.className?.toString()
-        Log.d(TAG, "onAccessibilityEvent pkg=$pkg className=$className")
+        Log.i(TAG, "onAccessibilityEvent pkg=$pkg className=$className")
 
         if (pkg == null || pkg.isEmpty()) {
-            Log.v(TAG, "Ignore: no package")
+            Log.i(TAG, "Ignore: no package")
             return
         }
         if (pkg == packageName) {
-            Log.v(TAG, "Ignore: our own app")
+            Log.i(TAG, "Ignore: our own app")
             return
         }
         if (pkg == "com.android.systemui") {
-            Log.v(TAG, "Ignore: systemui")
+            Log.i(TAG, "Ignore: systemui")
             return
         }
         if (pkg == "com.android.launcher" || pkg == "com.android.launcher3") {
-            Log.v(TAG, "Ignore: launcher")
+            Log.i(TAG, "Ignore: launcher")
+            return
+        }
+        if (isSystemApp(pkg)) {
+            Log.i(TAG, "Ignore: $pkg is system app")
             return
         }
 
         val prefs = Prefs(this)
         if (pkg in prefs.whitelist) {
-            Log.d(TAG, "Ignore: $pkg is whitelisted")
+            Log.i(TAG, "Ignore: $pkg is whitelisted")
             return
         }
 
@@ -52,24 +58,41 @@ class AppDetectionAccessibilityService : AccessibilityService() {
         }
         try {
             startActivity(intent)
-            Log.d(TAG, "BlockActivity started")
+            Log.i(TAG, "BlockActivity started")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start BlockActivity", e)
         }
     }
 
     override fun onInterrupt() {
-        Log.d(TAG, "onInterrupt")
+        Log.i(TAG, "onInterrupt")
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.i(TAG, "Accessibility service connected")
+        val info = AccessibilityServiceInfo().apply {
+            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            notificationTimeout = 100
+        }
+        serviceInfo = info
+        Log.i(TAG, "Accessibility service CONNECTED - you should see 'onAccessibilityEvent' when opening other apps")
     }
 
     override fun onDestroy() {
-        Log.d(TAG, "onDestroy")
+        Log.i(TAG, "onDestroy")
         super.onDestroy()
+    }
+
+    private fun isSystemApp(pkg: String): Boolean {
+        return try {
+            val info = packageManager.getApplicationInfo(pkg, 0)
+            (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
+                (info.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+        } catch (_: Exception) {
+            false
+        }
     }
 
     companion object {

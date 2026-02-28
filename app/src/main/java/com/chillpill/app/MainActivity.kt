@@ -23,7 +23,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d(TAG, "onCreate")
+        Log.i(TAG, "onCreate")
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -42,7 +42,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        Log.d(TAG, "onResume a11y=${isAccessibilityEnabled()} overlay=${canDrawOverlays()}")
+        Log.i(TAG, "onResume a11y=${isAccessibilityEnabled()} overlay=${canDrawOverlays()}")
         updatePermissionButtonLabels()
     }
 
