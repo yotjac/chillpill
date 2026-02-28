@@ -39,6 +39,13 @@
             android:parentActivityName=".SettingsActivity"
             android:theme="@style/Theme.ChillPill" />
 
+        <activity
+            android:name=".BlockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.ChillPill" />
+
         <service
             android:name=".OverlayService"
             android:exported="false"

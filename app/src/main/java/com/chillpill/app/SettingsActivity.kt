@@ -3,6 +3,7 @@ package com.chillpill.app
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -22,9 +23,11 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.d(TAG, "onCreate")
         binding = ActivitySettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
         prefs = Prefs(this)
+        Log.d(TAG, "whitelist size=${prefs.whitelist.size} timerSeconds=${prefs.timerSeconds}")
 
         binding.toolbar.setNavigationOnClickListener { finish() }
 
@@ -51,6 +54,7 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onPause() {
         saveTimerSeconds()
+        Log.d(TAG, "onPause whitelist size=${prefs.whitelist.size} timerSeconds=${prefs.timerSeconds}")
         super.onPause()
     }
 
@@ -76,6 +80,9 @@ class SettingsActivity : AppCompatActivity() {
         }.sortedBy { it.label.lowercase() }
     }
 
+    companion object {
+        private const val TAG = "ChillPill/Settings"
     }
+}
 
 data class AppItem(val packageName: String, val label: String, val icon: android.graphics.drawable.Drawable)
