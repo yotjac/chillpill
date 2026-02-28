@@ -1,7 +1,5 @@
 package com.chillpill.app
 
-import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -66,12 +64,7 @@ class AppPickerActivity : AppCompatActivity() {
     }
 
     private fun loadAllApps(): List<AppItem> {
-        val pm = packageManager
-        return pm.getInstalledApplications(PackageManager.GET_META_DATA)
-            .filter { it.packageName != packageName }
-            .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 }
-            .map { AppItem(it.packageName, it.loadLabel(pm).toString(), it.loadIcon(pm)) }
-            .sortedBy { it.label.lowercase() }
+        return BlockableApps.getBlockableAppItems(this)
     }
 
     private fun saveAndFinish() {

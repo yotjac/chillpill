@@ -1,6 +1,5 @@
 package com.chillpill.app
 
-import android.content.pm.ApplicationInfo
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
@@ -8,12 +7,14 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 
 /**
- * Listens for app window changes. When the user opens an app that is not in the whitelist,
- * starts BlockActivity (full-screen pause screen). Starting an Activity from the accessibility
- * service is allowed; drawing an overlay or starting a foreground service from background is
- * restricted on Android 12+.
+ * Listens for app window changes. Only blocks apps that appear in the whitelist picker
+ * (user-installed, launchable, not launcher, not system). If the foreground app is not in that set,
+ * we ignore it. If it is in the set but in the user's whitelist, we ignore. Otherwise we show BlockActivity.
  */
 class AppDetectionAccessibilityService : AccessibilityService() {
+
+    /** Package names that can be blocked (same set as shown in the app picker). */
+    private var blockablePackages: Set<String> = emptySet()
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
@@ -29,16 +30,8 @@ class AppDetectionAccessibilityService : AccessibilityService() {
             Log.i(TAG, "Ignore: our own app")
             return
         }
-        if (pkg == "com.android.systemui") {
-            Log.i(TAG, "Ignore: systemui")
-            return
-        }
-        if (pkg == "com.android.launcher" || pkg == "com.android.launcher3") {
-            Log.i(TAG, "Ignore: launcher")
-            return
-        }
-        if (isSystemApp(pkg)) {
-            Log.i(TAG, "Ignore: $pkg is system app")
+        if (pkg !in blockablePackages) {
+            Log.i(TAG, "Ignore: $pkg not in blockable set (launcher/system/not launchable)")
             return
         }
 
@@ -70,6 +63,8 @@ class AppDetectionAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        blockablePackages = BlockableApps.getBlockablePackageNames(this)
+        Log.i(TAG, "Blockable packages count: ${blockablePackages.size}")
         val info = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
@@ -77,22 +72,12 @@ class AppDetectionAccessibilityService : AccessibilityService() {
             notificationTimeout = 100
         }
         serviceInfo = info
-        Log.i(TAG, "Accessibility service CONNECTED - you should see 'onAccessibilityEvent' when opening other apps")
+        Log.i(TAG, "Accessibility service CONNECTED")
     }
 
     override fun onDestroy() {
         Log.i(TAG, "onDestroy")
         super.onDestroy()
-    }
-
-    private fun isSystemApp(pkg: String): Boolean {
-        return try {
-            val info = packageManager.getApplicationInfo(pkg, 0)
-            (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
-                (info.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
-        } catch (_: Exception) {
-            false
-        }
     }
 
     companion object {
