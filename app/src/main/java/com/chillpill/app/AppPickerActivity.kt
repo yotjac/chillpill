@@ -24,16 +24,19 @@ class AppPickerActivity : AppCompatActivity() {
 
         binding.toolbar.setNavigationOnClickListener { finish() }
         binding.toolbar.setOnMenuItemClickListener { item ->
-            if (item.itemId == R.id.action_save) {
+            if (item.itemId == R.id.action_ok) {
                 saveAndFinish()
                 true
             } else false
+        }
+        binding.toolbar.post {
+            binding.toolbar.menu.findItem(R.id.action_ok)?.actionView?.setOnClickListener { saveAndFinish() }
         }
 
         val allApps = loadAllApps()
         adapter = AppPickerAdapter(
             apps = allApps,
-            initialWhitelist = prefs.whitelist,
+            initialBlacklist = prefs.blacklist,
             onSelectionChanged = { }
         )
         binding.recycler.layoutManager = LinearLayoutManager(this)
@@ -68,7 +71,7 @@ class AppPickerActivity : AppCompatActivity() {
     }
 
     private fun saveAndFinish() {
-        prefs.whitelist = adapter.getSelectedPackages()
+        prefs.blacklist = adapter.getSelectedPackages()
         setResult(RESULT_OK)
         finish()
     }

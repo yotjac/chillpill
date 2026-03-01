@@ -6,4 +6,8 @@
     <color name="primary_dark">#FF5A3FD9</color>
     <color name="surface_overlay">#E6FFFFFF</color>
     <color name="overlay_background">#F5F0FF</color>
+    <!-- Block screen overlay: semi-transparent dark, theme-friendly -->
+    <color name="block_overlay">#4D000000</color>
+    <!-- Dimmer overlay after timer ends -->
+    <color name="block_overlay_dimmer">#CC000000</color>
 </resources>

@@ -7,12 +7,12 @@ import com.chillpill.app.databinding.ItemAppPickerBinding
 
 class AppPickerAdapter(
     private val apps: List<AppItem>,
-    initialWhitelist: Set<String>,
+    initialBlacklist: Set<String>,
     private val onSelectionChanged: () -> Unit
 ) : RecyclerView.Adapter<AppPickerAdapter.VH>() {
 
     private var filteredApps: List<AppItem> = apps
-    private val selected = initialWhitelist.toMutableSet()
+    private val selected = initialBlacklist.toMutableSet()
 
     fun getSelectedPackages(): Set<String> = selected.toSet()
 

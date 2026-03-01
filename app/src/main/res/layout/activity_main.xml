@@ -25,7 +25,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:text="Pause before opening apps not on your list."
+        android:text="@string/main_subtitle"
         android:textColor="?android:attr/textColorSecondary"
         app:layout_constraintBottom_toTopOf="@id/btn_settings"
         app:layout_constraintEnd_toEndOf="parent"
@@ -59,20 +59,35 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
+            android:gravity="center_horizontal"
             android:padding="16dp">
 
             <TextView
+                android:id="@+id/perms_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:gravity="center"
                 android:text="Required permissions"
                 android:textStyle="bold"
                 android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/perms_warning"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:visibility="gone"
+                android:gravity="center"
+                android:text="At least one permission is missing. Accessibility is required for ChillPill to work."
+                android:textColor="?attr/colorError"
+                android:textSize="13sp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_accessibility"
                 style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:text="@string/enable_accessibility"
                 android:textAllCaps="false" />
 

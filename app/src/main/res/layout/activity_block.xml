@@ -1,53 +1,103 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@color/overlay_background"
-    android:gravity="center"
-    android:orientation="vertical"
-    android:padding="32dp">
+    android:layout_height="match_parent">
 
-    <TextView
-        android:id="@+id/block_timer"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:textSize="48sp"
-        android:textStyle="bold"
-        tools:text="5" />
-
-    <TextView
-        android:id="@+id/block_message"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:gravity="center"
-        android:text="@string/wait_message"
-        android:textSize="18sp" />
-
+    <!-- Image + overlay + timer (top section) -->
     <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <ImageView
+                android:id="@+id/block_background_image"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="matrix"
+                android:contentDescription="@null"
+                android:src="@drawable/therock" />
+
+            <View
+                android:id="@+id/block_overlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/block_overlay" />
+
+            <!-- Faded in when timer ends -->
+            <View
+                android:id="@+id/block_overlay_dimmer"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/block_overlay_dimmer"
+                android:alpha="0"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/block_timer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="?android:attr/textColorPrimaryInverse"
+                    android:textSize="48sp"
+                    android:textStyle="bold"
+                    tools:text="5" />
+            </LinearLayout>
+        </FrameLayout>
+    </LinearLayout>
+
+    <!-- Buttons layer: full screen, shown when timer ends -->
+    <FrameLayout
         android:id="@+id/block_buttons"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="32dp"
-        android:orientation="horizontal"
-        android:visibility="gone">
+        android:layout_height="match_parent"
+        android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btn_continue"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
-            android:layout_weight="1"
-            android:text="@string/continue_app" />
-
+        <!-- Big center: Return home -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_close_home"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_weight="1"
-            android:text="@string/close_and_go_home" />
-    </LinearLayout>
-</LinearLayout>
+            android:layout_gravity="center"
+            android:minWidth="200dp"
+            android:minHeight="64dp"
+            android:paddingStart="32dp"
+            android:paddingEnd="32dp"
+            app:cornerRadius="20dp"
+            android:text="@string/close_and_go_home"
+            android:textSize="18sp"
+            android:textAllCaps="false" />
+
+        <!-- Small circle: Open app (position set in code to random corner) -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_continue"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_gravity="top|start"
+            android:layout_margin="24dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:padding="0dp"
+            android:text=""
+            android:contentDescription="@string/continue_app"
+            app:cornerRadius="28dp"
+            app:icon="@android:drawable/ic_media_play"
+            app:iconSize="28dp"
+            app:iconGravity="textStart"
+            app:iconPadding="0dp"
+            app:iconTint="@android:color/white" />
+    </FrameLayout>
+</FrameLayout>

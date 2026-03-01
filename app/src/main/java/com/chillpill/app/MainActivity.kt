@@ -47,11 +47,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updatePermissionButtonLabels() {
-        binding.btnAccessibility.text = if (isAccessibilityEnabled()) "Accessibility: ON" else getString(R.string.enable_accessibility)
-        binding.btnOverlay.text = if (canDrawOverlays()) "Overlay: ON" else getString(R.string.enable_overlay)
+        val a11yOk = isAccessibilityEnabled()
+        val overlayOk = canDrawOverlays()
+        val notifOk = !(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) || hasNotificationPermission()
+
+        binding.btnAccessibility.text = if (a11yOk) getString(R.string.enable_accessibility) + " — " + getString(R.string.permission_granted)
+            else getString(R.string.enable_accessibility) + " — " + getString(R.string.permission_missing)
+        binding.btnOverlay.text = if (overlayOk) getString(R.string.enable_overlay) + " — " + getString(R.string.permission_granted)
+            else getString(R.string.enable_overlay) + " — " + getString(R.string.permission_missing)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            binding.btnNotification.text = if (hasNotificationPermission()) "Notification: ON" else getString(R.string.enable_notification)
+            binding.btnNotification.text = if (notifOk) getString(R.string.enable_notification) + " — " + getString(R.string.permission_granted)
+                else getString(R.string.enable_notification) + " — " + getString(R.string.permission_missing)
         }
+
+        val anyMissing = !a11yOk || !overlayOk || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notifOk)
+        binding.permsWarning.visibility = if (anyMissing) View.VISIBLE else View.GONE
     }
 
     private fun hasNotificationPermission(): Boolean =

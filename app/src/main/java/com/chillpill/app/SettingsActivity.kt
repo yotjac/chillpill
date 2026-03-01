@@ -4,6 +4,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
+import android.view.Menu
+import android.view.MenuItem
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -13,13 +15,13 @@ class SettingsActivity : AppCompatActivity() {
 
     private val appPickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
-            adapter.updateApps(loadWhitelistApps())
+            adapter.updateApps(loadBlacklistApps())
         }
     }
 
     private lateinit var binding: ActivitySettingsBinding
     private lateinit var prefs: Prefs
-    private lateinit var adapter: WhitelistAdapter
+    private lateinit var adapter: BlacklistAdapter
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,21 +29,28 @@ class SettingsActivity : AppCompatActivity() {
         binding = ActivitySettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
         prefs = Prefs(this)
-        Log.i(TAG, "whitelist size=${prefs.whitelist.size} timerSeconds=${prefs.timerSeconds}")
+        Log.i(TAG, "blacklist size=${prefs.blacklist.size} timerSeconds=${prefs.timerSeconds}")
 
-        binding.toolbar.setNavigationOnClickListener { finish() }
+        setSupportActionBar(binding.toolbar)
+        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+        binding.toolbar.setNavigationOnClickListener { saveAndFinish() }
 
         binding.editTimerSeconds.setText(prefs.timerSeconds.toString())
         binding.editTimerSeconds.setOnFocusChangeListener { _, hasFocus ->
             if (!hasFocus) saveTimerSeconds()
         }
 
-        adapter = WhitelistAdapter(
+        binding.editGraceMinutes.setText(prefs.gracePeriodMinutes.toString())
+        binding.editGraceMinutes.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) saveGraceMinutes()
+        }
+
+        adapter = BlacklistAdapter(
             prefs = prefs,
-            apps = loadWhitelistApps(),
+            apps = loadBlacklistApps(),
             onRemove = { pkg ->
-                prefs.whitelist = prefs.whitelist - pkg
-                adapter.updateApps(loadWhitelistApps())
+                prefs.blacklist = prefs.blacklist - pkg
+                adapter.updateApps(loadBlacklistApps())
             }
         )
         binding.recyclerWhitelist.layoutManager = LinearLayoutManager(this)
@@ -52,9 +61,31 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.settings_menu, menu)
+        menu.findItem(R.id.action_ok)?.actionView?.setOnClickListener { saveAndFinish() }
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (item.itemId == R.id.action_ok) {
+            saveAndFinish()
+            return true
+        }
+        return super.onOptionsItemSelected(item)
+    }
+
+    private fun saveAndFinish() {
+        saveTimerSeconds()
+        saveGraceMinutes()
+        setResult(RESULT_OK)
+        finish()
+    }
+
     override fun onPause() {
         saveTimerSeconds()
-        Log.i(TAG, "onPause whitelist size=${prefs.whitelist.size} timerSeconds=${prefs.timerSeconds}")
+        saveGraceMinutes()
+        Log.i(TAG, "onPause blacklist size=${prefs.blacklist.size} timerSeconds=${prefs.timerSeconds} graceMinutes=${prefs.gracePeriodMinutes}")
         super.onPause()
     }
 
@@ -64,9 +95,15 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadWhitelistApps(): List<AppItem> {
+    private fun saveGraceMinutes() {
+        binding.editGraceMinutes.text?.toString()?.toIntOrNull()?.let { min ->
+            prefs.gracePeriodMinutes = min.coerceIn(1, 1440)
+        }
+    }
+
+    private fun loadBlacklistApps(): List<AppItem> {
         val pm = packageManager
-        return prefs.whitelist.mapNotNull { pkg ->
+        return prefs.blacklist.mapNotNull { pkg ->
             try {
                 val info = pm.getApplicationInfo(pkg, 0)
                 AppItem(

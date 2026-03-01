@@ -13,7 +13,7 @@
         app:layout_constraintTop_toTopOf="parent"
         app:menu="@menu/app_picker_menu"
         app:navigationIcon="?attr/homeAsUpIndicator"
-        app:title="@string/manage_whitelist" />
+        app:title="@string/manage_blacklist" />
 
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/search_wrapper"

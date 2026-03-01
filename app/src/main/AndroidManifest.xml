@@ -17,6 +17,9 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- Explicit package visibility so these are always discoverable and blockable (e.g. ReVanced YouTube) -->
+        <package android:name="app.revanced.android.youtube" />
+        <package android:name="com.google.android.youtube" />
     </queries>
 
     <application
@@ -32,6 +35,8 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:clearTaskOnLaunch="true"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.ChillPill">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -43,12 +48,14 @@
             android:name=".SettingsActivity"
             android:exported="false"
             android:parentActivityName=".MainActivity"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.ChillPill" />
 
         <activity
             android:name=".AppPickerActivity"
             android:exported="false"
             android:parentActivityName=".SettingsActivity"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.ChillPill" />
 
         <activity
@@ -56,6 +63,7 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:launchMode="singleTask"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.ChillPill" />
 
         <service
