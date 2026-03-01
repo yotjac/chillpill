@@ -1,24 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ChillPill</string>
-    <string name="accessibility_service_description">ChillPill uses this to detect when you open apps, so it can show a short pause screen for apps not on your whitelist. No data is sent anywhere.</string>
-    <string name="open_settings">Open Settings</string>
+    <string name="accessibility_service_description">ChillPill uses this to detect when you open apps, so it can show a short pause screen for apps on your blacklist. No data is sent anywhere.</string>
+    <string name="open_settings">Settings</string>
+    <string name="edit_app_blacklist">Edit app blacklist</string>
+    <string name="permission_missing">Required — tap to enable</string>
+    <string name="permission_granted">Enabled</string>
     <string name="enable_accessibility">Enable Accessibility Service</string>
     <string name="enable_overlay">Grant Overlay Permission</string>
     <string name="enable_notification">Allow notification (for timer)</string>
     <string name="wait_message">Take a breath. You opened an app not on your list.</string>
     <string name="continue_app">Continue to app</string>
-    <string name="close_and_go_home">Close and go home</string>
-    <string name="whitelist_title">App whitelist</string>
+    <string name="close_and_go_home">Return Home</string>
+    <string name="blacklist_title">App blacklist</string>
     <string name="timer_seconds_title">Wait time (seconds)</string>
-    <string name="add_app">Add app to whitelist</string>
-    <string name="manage_whitelist">Manage whitelist</string>
+    <string name="grace_period_minutes_title">Grace period (minutes)</string>
+    <string name="grace_period_minutes_hint">Minutes after continuing to an app without being blocked</string>
+    <string name="add_app">Add app to blacklist</string>
+    <string name="manage_blacklist">Manage blacklist</string>
     <string name="select_all">Select all</string>
     <string name="select_none">Select none</string>
     <string name="save">Save</string>
+    <string name="ok">OK</string>
     <string name="search_apps">Search apps…</string>
     <string name="remove">Remove</string>
     <string name="seconds">%d seconds</string>
     <string name="overlay_notification_channel">ChillPill overlay</string>
     <string name="overlay_notification_title">ChillPill is active</string>
+    <string name="main_subtitle">Take the edge off your phone\'s witchery</string>
 </resources>
