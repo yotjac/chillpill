@@ -14,6 +14,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
@@ -22,6 +23,8 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chillpill.ChillpillApp
@@ -34,8 +37,15 @@ fun HomeScreen(
     onFixPermissions: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val viewModel: HomeViewModel = viewModel()
+    val viewModel: HomeViewModel = viewModel(
+        factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = HomeViewModel(app) as T
+        }
+    )
     val permissionsOk by viewModel.permissionsOk.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) { viewModel.refreshPermissions() }
 
     Column(modifier = modifier.fillMaxSize()) {
         if (!permissionsOk) {
