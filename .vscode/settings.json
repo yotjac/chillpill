@@ -1,0 +1,5 @@
+{
+  "git.enabled": true,
+  "git.autorefresh": true,
+  "git.repositoryScanMaxDepth": 1
+}
