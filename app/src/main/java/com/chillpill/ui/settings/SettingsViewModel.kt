@@ -1,15 +1,18 @@
 package com.chillpill.ui.settings
 
+import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.chillpill.ChillpillApp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class AppInfo(
     val packageName: String,
@@ -57,14 +60,33 @@ class SettingsViewModel(
 
     private fun loadInstalledApps() {
         viewModelScope.launch {
-            val pm = app.packageManager
-            val apps = app.packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
-                .filter { it.packageName != app.packageName }
-                .map { applicationInfo ->
-                    val label = pm.getApplicationLabel(applicationInfo).toString()
-                    AppInfo(packageName = applicationInfo.packageName, label = label)
-                }
-                .sortedBy { it.label.lowercase() }
+            val apps = withContext(Dispatchers.IO) {
+                val pm = app.packageManager
+                val chillpillPackage = app.packageName
+                val monitoredSet = app.monitoredAppsRepository.monitoredPackages.first()
+
+                val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                @Suppress("DEPRECATION")
+                val resolveInfos = pm.queryIntentActivities(launcherIntent, 0)
+
+                val launcherPackages = resolveInfos
+                    .map { it.activityInfo.packageName }
+                    .distinct()
+                    .filter { it != chillpillPackage }
+                    .toSet()
+
+                val packageNames = (launcherPackages + monitoredSet).distinct()
+
+                packageNames.mapNotNull { packageName ->
+                    try {
+                        val applicationInfo = pm.getApplicationInfo(packageName, 0)
+                        val label = pm.getApplicationLabel(applicationInfo).toString()
+                        AppInfo(packageName = packageName, label = label)
+                    } catch (_: PackageManager.NameNotFoundException) {
+                        null
+                    }
+                }.sortedBy { it.label.lowercase() }
+            }
             _installedApps.value = apps
         }
     }
