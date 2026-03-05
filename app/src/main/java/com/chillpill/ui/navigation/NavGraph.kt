@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -25,8 +26,12 @@ private const val NavTransitionDuration = 300
 fun ChillpillNavHost(
     app: ChillpillApp,
     onFixPermissions: () -> Unit = {},
+    openSettingsOnLaunch: Boolean = false,
     navController: NavHostController = rememberNavController()
 ): NavHostController {
+    LaunchedEffect(openSettingsOnLaunch) {
+        if (openSettingsOnLaunch) navController.navigate(Routes.SETTINGS)
+    }
     NavHost(
         navController = navController,
         startDestination = Routes.HOME

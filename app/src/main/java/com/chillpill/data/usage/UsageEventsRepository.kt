@@ -33,4 +33,16 @@ class UsageEventsRepository(private val database: UsageDatabase) {
         val since = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
         return dao.countEventsSince(packageName, UsageEventType.OPEN_ATTEMPT, since)
     }
+
+    /** Count of OPEN_ATTEMPT in last 24h (times app was opened and intercepted). */
+    suspend fun getOpenInterceptCountLast24h(packageName: String): Int {
+        val since = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
+        return dao.countEventsSince(packageName, UsageEventType.OPEN_ATTEMPT, since)
+    }
+
+    /** Count of WAIT_COMPLETED in last 24h (times user waited and continued to app). */
+    suspend fun getWaitCompletedCountLast24h(packageName: String): Int {
+        val since = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
+        return dao.countEventsSince(packageName, UsageEventType.WAIT_COMPLETED, since)
+    }
 }

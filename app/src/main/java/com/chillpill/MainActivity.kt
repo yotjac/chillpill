@@ -13,9 +13,16 @@ import com.chillpill.ui.navigation.ChillpillNavHost
 import com.chillpill.ui.theme.ChillpillTheme
 
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        const val EXTRA_OPEN_SETTINGS = "com.chillpill.OPEN_SETTINGS"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as ChillpillApp
+        val openSettingsOnLaunch = intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS, false) == true
+        if (openSettingsOnLaunch) intent?.removeExtra(EXTRA_OPEN_SETTINGS)
         setContent {
             ChillpillTheme {
                 Surface(
@@ -24,7 +31,8 @@ class MainActivity : ComponentActivity() {
                 ) {
                     ChillpillNavHost(
                         app = app,
-                        onFixPermissions = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                        onFixPermissions = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                        openSettingsOnLaunch = openSettingsOnLaunch
                     )
                 }
             }
