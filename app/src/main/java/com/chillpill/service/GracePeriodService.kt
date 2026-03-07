@@ -64,6 +64,7 @@ class GracePeriodService : Service() {
                 app.settingsRepository.settings.first().gracePeriodMinutes
             }
             val graceSeconds = graceMinutes * 60L
+            Log.d(TAG, "startGraceTimer: pkg=$packageName graceMinutes=$graceMinutes")
             var elapsed = 0L
             while (elapsed < graceSeconds) {
                 delay(1000L)
@@ -74,10 +75,14 @@ class GracePeriodService : Service() {
     }
 
     private suspend fun onGraceExpired(packageName: String, className: String?) {
-        val currentForeground = BlockingSharedState.lastForegroundPackage
+        BlockingSharedState.clearGraceForPackage(packageName)
+        val currentForeground = BlockingSharedState.currentForegroundPackage
+        Log.d(TAG, "onGraceExpired: pkg=$packageName currentForeground=$currentForeground")
         if (currentForeground == packageName) {
+            Log.d(TAG, "onGraceExpired: user still in app, showing block")
             startBlockActivity(packageName, className)
         } else {
+            Log.d(TAG, "onGraceExpired: user left app, setting graceExpiredForPackage")
             BlockingSharedState.setGraceExpiredForPackage(packageName)
         }
         stopSelf()

@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.util.Log
+import androidx.core.content.ContextCompat
 import android.view.accessibility.AccessibilityEvent
 import com.chillpill.AppBlockActivity
 import com.chillpill.ChillpillApp
@@ -20,12 +21,14 @@ class ChillpillAccessibilityService : AccessibilityService() {
     private val app: ChillpillApp
         get() = applicationContext as ChillpillApp
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /** Single-thread scope so only one processEvent runs at a time; all access to previousForegroundPackage is on this thread. */
+    private val eventProcessorScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default.limitedParallelism(1)
+    )
 
-    private var lastPackage: String? = null
-    private var lastClassName: String? = null
+    /** Previous foreground package; used to detect "leaving" and "return from block". Updated at end of each event. Only accessed from eventProcessorScope. */
+    private var previousForegroundPackage: String? = null
     private val blockShownAt = mutableMapOf<String, Long>()
-    private val latestClosingTime = mutableMapOf<String, Long>()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -42,96 +45,115 @@ class ChillpillAccessibilityService : AccessibilityService() {
         val pkg = event.packageName?.toString() ?: return
         val className = event.className?.toString()
 
-        // Same app: no block logic
-        if (pkg == lastPackage) {
-            lastPackage = pkg
-            lastClassName = className
-            BlockingSharedState.setLastForegroundPackage(pkg)
-            return
-        }
-
-        serviceScope.launch {
+        Log.d(TAG, "onAccessibilityEvent: foreground pkg=$pkg className=$className")
+        eventProcessorScope.launch {
+            // Same-app check and processEvent run on single thread so previousForegroundPackage has no race
+            if (pkg == previousForegroundPackage) {
+                Log.d(TAG, "onAccessibilityEvent: same app pkg=$pkg, skipping")
+                previousForegroundPackage = pkg
+                BlockingSharedState.setCurrentForegroundPackage(pkg)
+                return@launch
+            }
             processEvent(pkg, className)
         }
     }
 
     private suspend fun processEvent(pkg: String, className: String?) {
         try {
-            val monitored = withContext(Dispatchers.IO) {
+            val monitoredPackages = withContext(Dispatchers.IO) {
                 app.monitoredAppsRepository.monitoredPackages.first()
             }
-
-            // Leaving a monitored app (previous was monitored, switching to any other app)
-            lastPackage?.let { prev ->
-                if (prev in monitored && prev != pkg) {
-                    latestClosingTime[prev] = System.currentTimeMillis()
-                }
-            }
-            BlockingSharedState.setLastForegroundPackage(pkg)
-
-            if (pkg !in monitored) {
-                lastPackage = pkg
-                lastClassName = className
-                return
-            }
-
-            // Check grace-expired flag (re-intervention from GracePeriodService when app was not in foreground)
-            BlockingSharedState.graceExpiredForPackage?.let { expiredPkg ->
-                if (expiredPkg == pkg) {
-                    BlockingSharedState.setGraceExpiredForPackage(null)
-                    startBlockActivity(pkg, className, isReIntervention = true)
-                    updateLastAndForeground(pkg, className)
-                    return
-                }
-            }
-
-            // User returned from our block (last was Chillpill, now opening monitored app)
-            if (lastPackage == applicationContext.packageName) {
-                blockShownAt.remove(pkg)
-                startGracePeriodService(pkg, className)
-                updateLastAndForeground(pkg, className)
-                return
-            }
-
-            // Entering monitored app from elsewhere: check grace and maybe show block
             val settings = withContext(Dispatchers.IO) {
                 app.settingsRepository.settings.first()
             }
             val graceMs = settings.gracePeriodMinutes * 60L * 1000L
-            val closedAt = latestClosingTime[pkg] ?: 0L
-            val graceExpired = closedAt + graceMs < System.currentTimeMillis()
 
-            if (graceExpired) {
-                withContext(Dispatchers.IO) {
-                    app.usageEventsRepository.recordEvent(pkg, UsageEventType.OPEN_ATTEMPT)
-                }
-                blockShownAt[pkg] = System.currentTimeMillis()
-                startBlockActivity(pkg, className, isReIntervention = false)
-            } else {
-                startGracePeriodService(pkg, className)
+            Log.d(TAG, "processEvent: pkg=$pkg monitoredCount=${monitoredPackages.size} monitored=$monitoredPackages")
+
+            recordLeavingMonitoredApp(monitoredPackages, pkg, graceMs)
+            // GracePeriodService reads this when the timer expires to decide re-intervene vs set grace-expired flag
+            BlockingSharedState.setCurrentForegroundPackage(pkg)
+
+            if (pkg !in monitoredPackages) {
+                Log.d(TAG, "processEvent: pkg not monitored, allowing")
+                setPreviousForeground(pkg)
+                return
             }
 
-            updateLastAndForeground(pkg, className)
+            if (tryHandleGraceExpiredReIntervention(pkg, className)) {
+                Log.d(TAG, "processEvent: handled grace-expired re-intervention for pkg=$pkg")
+                setPreviousForeground(pkg)
+                return
+            }
+            if (tryHandleReturnFromBlock(pkg, className)) {
+                Log.d(TAG, "processEvent: handled return from block, starting grace for pkg=$pkg")
+                setPreviousForeground(pkg)
+                return
+            }
+            if (BlockingSharedState.isInGracePeriod(pkg)) {
+                Log.d(TAG, "processEvent: pkg=$pkg in grace period, allowing")
+                setPreviousForeground(pkg)
+                return
+            }
+            Log.d(TAG, "processEvent: showing block for pkg=$pkg (entering from elsewhere, grace expired)")
+            handleEnteringMonitoredAppFromElsewhere(pkg, className)
+
+            setPreviousForeground(pkg)
         } catch (e: Exception) {
             Log.e(TAG, "processEvent failed for pkg=$pkg", e)
         }
     }
 
-    private fun updateLastAndForeground(pkg: String, className: String?) {
-        lastPackage = pkg
-        lastClassName = className
-        BlockingSharedState.setLastForegroundPackage(pkg)
+    private fun recordLeavingMonitoredApp(monitoredPackages: Set<String>, newPackage: String, graceMs: Long) {
+        // Do not grant grace when switching to our block activity: user did not leave the app voluntarily
+        if (newPackage == applicationContext.packageName) return
+        previousForegroundPackage?.let { prev ->
+            if (prev in monitoredPackages && prev != newPackage) {
+                BlockingSharedState.setGraceValidUntil(prev, System.currentTimeMillis() + graceMs)
+            }
+        }
+    }
+
+    private fun tryHandleGraceExpiredReIntervention(pkg: String, className: String?): Boolean {
+        val expiredPkg = BlockingSharedState.graceExpiredForPackage ?: return false
+        if (expiredPkg != pkg) return false
+        BlockingSharedState.setGraceExpiredForPackage(null)
+        startBlockActivity(pkg, className, isReIntervention = true)
+        return true
+    }
+
+    private fun tryHandleReturnFromBlock(pkg: String, className: String?): Boolean {
+        if (previousForegroundPackage != applicationContext.packageName) return false
+        blockShownAt.remove(pkg)
+        startGracePeriodService(pkg, className)
+        return true
+    }
+
+    private suspend fun handleEnteringMonitoredAppFromElsewhere(pkg: String, className: String?) {
+        withContext(Dispatchers.IO) {
+            app.usageEventsRepository.recordEvent(pkg, UsageEventType.OPEN_ATTEMPT)
+        }
+        blockShownAt[pkg] = System.currentTimeMillis()
+        startBlockActivity(pkg, className, isReIntervention = false)
+    }
+
+    /** Updates local state for next event. Shared current-foreground is already set at start of processEvent. */
+    private fun setPreviousForeground(pkg: String) {
+        previousForegroundPackage = pkg
     }
 
     private fun startBlockActivity(packageName: String, className: String?, isReIntervention: Boolean) {
         try {
             val intent = Intent(applicationContext, AppBlockActivity::class.java).apply {
+                setPackage(applicationContext.packageName)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_HISTORY)
                 putExtra(AppBlockActivity.EXTRA_PACKAGE_NAME, packageName)
                 className?.let { putExtra(AppBlockActivity.EXTRA_CLASS_NAME, it) }
                 putExtra(AppBlockActivity.EXTRA_IS_RE_INTERVENTION, isReIntervention)
             }
+            Log.d(TAG, "startBlockActivity: launching packageName=$packageName isReIntervention=$isReIntervention")
             applicationContext.startActivity(intent)
+            Log.d(TAG, "startBlockActivity: startActivity returned for packageName=$packageName (if block does not appear, check Android 10+ background start restrictions)")
         } catch (e: Exception) {
             Log.e(TAG, "startBlockActivity failed for packageName=$packageName", e)
         }
@@ -144,7 +166,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
                 putExtra(GracePeriodService.EXTRA_PACKAGE_NAME, packageName)
                 className?.let { putExtra(GracePeriodService.EXTRA_CLASS_NAME, it) }
             }
-            applicationContext.startForegroundService(intent)
+            ContextCompat.startForegroundService(applicationContext, intent)
         } catch (e: Exception) {
             Log.e(TAG, "startGracePeriodService failed for packageName=$packageName", e)
         }

@@ -46,7 +46,10 @@ class AppBlockActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (intent.getStringExtra(EXTRA_PACKAGE_NAME).isNullOrBlank()) {
+        val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME)
+        Log.d(TAG, "onCreate: packageName=$packageName isReIntervention=${intent.getBooleanExtra(EXTRA_IS_RE_INTERVENTION, false)}")
+        if (packageName.isNullOrBlank()) {
+            Log.w(TAG, "onCreate: missing packageName, finishing")
             finish()
             return
         }
@@ -55,13 +58,14 @@ class AppBlockActivity : ComponentActivity() {
             finish()
             return
         }
+        Log.d(TAG, "onCreate: showing block screen for packageName=$packageName")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         lifecycleScope.launch {
             viewModel.events.collect { event ->
                 when (event) {
-                    AppBlockEvent.RequestFinish -> finish()
+                    AppBlockEvent.RequestFinish -> launchTargetAppAndFinish()
                     AppBlockEvent.RequestGoHome -> goHomeAndFinish()
                 }
             }
@@ -86,6 +90,29 @@ class AppBlockActivity : ComponentActivity() {
         }
     }
 
+    private fun launchTargetAppAndFinish() {
+        val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: return
+        val className = intent.getStringExtra(EXTRA_CLASS_NAME)
+        try {
+            val launchIntent = if (!className.isNullOrBlank()) {
+                Intent().apply {
+                    setClassName(packageName, className)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+            } else {
+                packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+            }
+            if (launchIntent != null) {
+                startActivity(launchIntent)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "launchTargetAppAndFinish failed for packageName=$packageName", e)
+        }
+        finish()
+    }
+
     private fun goHomeAndFinish() {
         startActivity(
             Intent(Intent.ACTION_MAIN).apply {
@@ -98,7 +125,13 @@ class AppBlockActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        Log.d(TAG, "onUserLeaveHint: user left, finishing")
         finish()
+    }
+
+    override fun onDestroy() {
+        Log.d(TAG, "onDestroy: packageName=${intent.getStringExtra(EXTRA_PACKAGE_NAME)}")
+        super.onDestroy()
     }
 
     companion object {

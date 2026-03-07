@@ -21,7 +21,10 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,7 +45,7 @@ private fun rememberBlockBackgroundPainter(): BitmapPainter? {
     val context = LocalContext.current
     return remember(context) {
         try {
-            val drawable = context.getDrawable(R.drawable.block_background) ?: return@remember null
+            val drawable = context.getDrawable(R.drawable.block_activity_background) ?: return@remember null
             val w = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 512
             val h = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 512
             val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -67,6 +70,11 @@ fun AppBlockScreen(
     modifier: Modifier = Modifier
 ) {
     val backgroundPainter = rememberBlockBackgroundPainter()
+    val animatedProgress: Float by animateFloatAsState(
+        targetValue = progress,
+        animationSpec = tween(durationMillis = 100),
+        label = "overlayProgress"
+    )
     Box(modifier = modifier.fillMaxSize()) {
         // Full-screen background: drawable or solid-color fallback when resource loading fails (e.g. REPLACED package state)
         if (backgroundPainter != null) {
@@ -91,7 +99,7 @@ fun AppBlockScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .fillMaxHeight(1f - progress)
+                        .fillMaxHeight(1f - animatedProgress)
                         .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f))
                 )
             }

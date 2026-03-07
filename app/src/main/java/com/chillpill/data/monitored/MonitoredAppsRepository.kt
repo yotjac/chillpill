@@ -25,17 +25,4 @@ class MonitoredAppsRepository(private val context: Context) {
         context.monitoredAppsDataStore.edit { it[Keys.PACKAGE_NAMES] = packageNames }
     }
 
-    suspend fun add(packageName: String) {
-        context.monitoredAppsDataStore.edit { prefs ->
-            val current = prefs[Keys.PACKAGE_NAMES] ?: emptySet()
-            prefs[Keys.PACKAGE_NAMES] = current + packageName
-        }
-    }
-
-    suspend fun remove(packageName: String) {
-        context.monitoredAppsDataStore.edit { prefs ->
-            val current = prefs[Keys.PACKAGE_NAMES] ?: emptySet()
-            prefs[Keys.PACKAGE_NAMES] = current - packageName
-        }
-    }
 }

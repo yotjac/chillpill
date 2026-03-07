@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.chillpill.ChillpillApp
 import com.chillpill.data.usage.UsageEventType
+import com.chillpill.service.BlockingSharedState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,6 +75,9 @@ class AppBlockViewModel(
                     eventType = UsageEventType.WAIT_COMPLETED,
                     sessionStartTime = System.currentTimeMillis()
                 )
+                val settings = app.settingsRepository.settings.first()
+                val graceMs = settings.gracePeriodMinutes * 60L * 1000L
+                BlockingSharedState.setGraceValidUntil(packageName, System.currentTimeMillis() + graceMs)
             }
             _events.send(AppBlockEvent.RequestFinish)
         }
