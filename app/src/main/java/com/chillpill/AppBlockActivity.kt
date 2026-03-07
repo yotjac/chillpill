@@ -121,7 +121,6 @@ class AppBlockActivity : ComponentActivity() {
     private fun buildLaunchIntentForPackage(packageName: String): Intent? =
         packageManager.getLaunchIntentForPackage(packageName) ?: resolveLauncherActivity(packageName)
 
-    @Suppress("DEPRECATION")
     private fun resolveLauncherActivity(packageName: String): Intent? {
         val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val resolveInfos = packageManager.queryIntentActivities(launcherIntent, 0)
@@ -154,6 +153,7 @@ class AppBlockActivity : ComponentActivity() {
     companion object {
         private const val TAG = "AppBlockActivity"
         const val EXTRA_PACKAGE_NAME = "packageName"
+        const val EXTRA_CLASS_NAME = "className"
         const val EXTRA_IS_RE_INTERVENTION = "isReIntervention"
     }
 }
