@@ -97,7 +97,7 @@ private fun PermissionBanner(
         shape = RoundedCornerShape(0.dp)
     ) {
         val annotatedString = buildAnnotatedString {
-            append("Usage access and accessibility permission required — ")
+            append("Usage access and accessibility permission required: ")
             pushStringAnnotation(tag = "fix_here", annotation = "")
             with(SpanStyle(textDecoration = TextDecoration.Underline)) {
                 append("fix here")
