@@ -2,14 +2,20 @@ package com.chillpill.ui.home
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -23,8 +29,10 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chillpill.ChillpillApp
@@ -46,6 +54,7 @@ fun HomeScreen(
     val permissionsOk by viewModel.permissionsOk.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { viewModel.refreshPermissions() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshPermissions() }
 
     Column(modifier = modifier.fillMaxSize()) {
         if (!permissionsOk) {
@@ -86,6 +95,8 @@ fun HomeScreen(
 private val AlertBannerBackground = Color(0xFFFCE8E8)
 private val AlertBannerText = Color(0xFF991B1B)
 
+private val AlertBannerLink = Color(0xFF7F1D1D)
+
 @Composable
 private fun PermissionBanner(
     onFixHereClick: () -> Unit,
@@ -98,21 +109,38 @@ private fun PermissionBanner(
     ) {
         val annotatedString = buildAnnotatedString {
             append("Usage access and accessibility permission required: ")
-            pushStringAnnotation(tag = "fix_here", annotation = "")
-            with(SpanStyle(textDecoration = TextDecoration.Underline)) {
-                append("fix here")
-            }
-            pop()
+            val fixHereStart = length
+            append("fix here")
+            addStringAnnotation(tag = "fix_here", annotation = "", start = fixHereStart, end = length)
+            addStyle(
+                style = SpanStyle(color = AlertBannerLink, textDecoration = TextDecoration.Underline),
+                start = fixHereStart,
+                end = length
+            )
         }
-        ClickableText(
-            text = annotatedString,
-            style = MaterialTheme.typography.bodyMedium.copy(color = AlertBannerText),
+        Row(
             modifier = Modifier.padding(16.dp),
-            onClick = { offset ->
-                annotatedString.getStringAnnotations("fix_here", offset, offset + 1).firstOrNull()?.let {
-                    onFixHereClick()
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = "Permission required",
+                tint = AlertBannerText,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            ClickableText(
+                text = annotatedString,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    color = AlertBannerText,
+                    textDecoration = TextDecoration.None
+                ),
+                onClick = { offset ->
+                    annotatedString.getStringAnnotations("fix_here", offset, offset + 1).firstOrNull()?.let {
+                        onFixHereClick()
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 }
