@@ -30,7 +30,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun setGracePeriodMinutes(minutes: Int) {
-        context.settings DataStore.edit { it[Keys.GRACE_PERIOD_MINUTES] = minutes }
+        context.settingsDataStore.edit { it[Keys.GRACE_PERIOD_MINUTES] = minutes }
     }
 
     suspend fun setSettings(settings: Settings) {
