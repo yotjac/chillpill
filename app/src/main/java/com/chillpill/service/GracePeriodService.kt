@@ -35,15 +35,14 @@ class GracePeriodService : Service() {
         when (intent?.action) {
             ACTION_START, ACTION_RESUME -> {
                 val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: return START_NOT_STICKY
-                val className = intent.getStringExtra(EXTRA_CLASS_NAME)
-                startGraceTimer(packageName, className)
+                startGraceTimer(packageName)
             }
             else -> { /* ignore */ }
         }
         return START_NOT_STICKY
     }
 
-    private fun startGraceTimer(packageName: String, className: String?) {
+    private fun startGraceTimer(packageName: String) {
         graceJob?.cancel()
         createNotificationChannel()
         val notification = buildNotification()
@@ -70,17 +69,17 @@ class GracePeriodService : Service() {
                 delay(1000L)
                 elapsed++
             }
-            onGraceExpired(packageName, className)
+            onGraceExpired(packageName)
         }
     }
 
-    private suspend fun onGraceExpired(packageName: String, className: String?) {
+    private suspend fun onGraceExpired(packageName: String) {
         BlockingSharedState.clearGraceForPackage(packageName)
         val currentForeground = BlockingSharedState.currentForegroundPackage
         Log.d(TAG, "onGraceExpired: pkg=$packageName currentForeground=$currentForeground")
         if (currentForeground == packageName) {
             Log.d(TAG, "onGraceExpired: user still in app, showing block")
-            startBlockActivity(packageName, className)
+            startBlockActivity(packageName)
         } else {
             Log.d(TAG, "onGraceExpired: user left app, setting graceExpiredForPackage")
             BlockingSharedState.setGraceExpiredForPackage(packageName)
@@ -88,12 +87,11 @@ class GracePeriodService : Service() {
         stopSelf()
     }
 
-    private fun startBlockActivity(packageName: String, className: String?) {
+    private fun startBlockActivity(packageName: String) {
         try {
             val intent = Intent(applicationContext, AppBlockActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_HISTORY)
                 putExtra(AppBlockActivity.EXTRA_PACKAGE_NAME, packageName)
-                className?.let { putExtra(AppBlockActivity.EXTRA_CLASS_NAME, it) }
                 putExtra(AppBlockActivity.EXTRA_IS_RE_INTERVENTION, true)
             }
             applicationContext.startActivity(intent)
@@ -139,7 +137,6 @@ class GracePeriodService : Service() {
         const val ACTION_START = "com.chillpill.grace.START"
         const val ACTION_RESUME = "com.chillpill.grace.RESUME"
         const val EXTRA_PACKAGE_NAME = "packageName"
-        const val EXTRA_CLASS_NAME = "className"
         private const val CHANNEL_ID = "chillpill_grace"
         private const val NOTIFICATION_ID = 1
     }

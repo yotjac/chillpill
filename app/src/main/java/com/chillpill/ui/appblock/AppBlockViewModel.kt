@@ -25,7 +25,6 @@ sealed class AppBlockEvent {
 class AppBlockViewModel(
     private val app: ChillpillApp,
     val packageName: String,
-    val className: String?,
     val isReIntervention: Boolean
 ) : ViewModel() {
 

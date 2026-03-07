@@ -43,9 +43,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
-        val className = event.className?.toString()
-
-        Log.d(TAG, "onAccessibilityEvent: foreground pkg=$pkg className=$className")
+        Log.d(TAG, "onAccessibilityEvent: foreground pkg=$pkg")
         eventProcessorScope.launch {
             // Same-app check and processEvent run on single thread so previousForegroundPackage has no race
             if (pkg == previousForegroundPackage) {
@@ -54,11 +52,11 @@ class ChillpillAccessibilityService : AccessibilityService() {
                 BlockingSharedState.setCurrentForegroundPackage(pkg)
                 return@launch
             }
-            processEvent(pkg, className)
+            processEvent(pkg)
         }
     }
 
-    private suspend fun processEvent(pkg: String, className: String?) {
+    private suspend fun processEvent(pkg: String) {
         try {
             val monitoredPackages = withContext(Dispatchers.IO) {
                 app.monitoredAppsRepository.monitoredPackages.first()
@@ -80,12 +78,12 @@ class ChillpillAccessibilityService : AccessibilityService() {
                 return
             }
 
-            if (tryHandleGraceExpiredReIntervention(pkg, className)) {
+            if (tryHandleGraceExpiredReIntervention(pkg)) {
                 Log.d(TAG, "processEvent: handled grace-expired re-intervention for pkg=$pkg")
                 setPreviousForeground(pkg)
                 return
             }
-            if (tryHandleReturnFromBlock(pkg, className)) {
+            if (tryHandleReturnFromBlock(pkg)) {
                 Log.d(TAG, "processEvent: handled return from block, starting grace for pkg=$pkg")
                 setPreviousForeground(pkg)
                 return
@@ -96,7 +94,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
                 return
             }
             Log.d(TAG, "processEvent: showing block for pkg=$pkg (entering from elsewhere, grace expired)")
-            handleEnteringMonitoredAppFromElsewhere(pkg, className)
+            handleEnteringMonitoredAppFromElsewhere(pkg)
 
             setPreviousForeground(pkg)
         } catch (e: Exception) {
@@ -114,27 +112,27 @@ class ChillpillAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun tryHandleGraceExpiredReIntervention(pkg: String, className: String?): Boolean {
+    private fun tryHandleGraceExpiredReIntervention(pkg: String): Boolean {
         val expiredPkg = BlockingSharedState.graceExpiredForPackage ?: return false
         if (expiredPkg != pkg) return false
         BlockingSharedState.setGraceExpiredForPackage(null)
-        startBlockActivity(pkg, className, isReIntervention = true)
+        startBlockActivity(pkg, isReIntervention = true)
         return true
     }
 
-    private fun tryHandleReturnFromBlock(pkg: String, className: String?): Boolean {
+    private fun tryHandleReturnFromBlock(pkg: String): Boolean {
         if (previousForegroundPackage != applicationContext.packageName) return false
         blockShownAt.remove(pkg)
-        startGracePeriodService(pkg, className)
+        startGracePeriodService(pkg)
         return true
     }
 
-    private suspend fun handleEnteringMonitoredAppFromElsewhere(pkg: String, className: String?) {
+    private suspend fun handleEnteringMonitoredAppFromElsewhere(pkg: String) {
         withContext(Dispatchers.IO) {
             app.usageEventsRepository.recordEvent(pkg, UsageEventType.OPEN_ATTEMPT)
         }
         blockShownAt[pkg] = System.currentTimeMillis()
-        startBlockActivity(pkg, className, isReIntervention = false)
+        startBlockActivity(pkg, isReIntervention = false)
     }
 
     /** Updates local state for next event. Shared current-foreground is already set at start of processEvent. */
@@ -142,13 +140,12 @@ class ChillpillAccessibilityService : AccessibilityService() {
         previousForegroundPackage = pkg
     }
 
-    private fun startBlockActivity(packageName: String, className: String?, isReIntervention: Boolean) {
+    private fun startBlockActivity(packageName: String, isReIntervention: Boolean) {
         try {
             val intent = Intent(applicationContext, AppBlockActivity::class.java).apply {
                 setPackage(applicationContext.packageName)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_HISTORY)
                 putExtra(AppBlockActivity.EXTRA_PACKAGE_NAME, packageName)
-                className?.let { putExtra(AppBlockActivity.EXTRA_CLASS_NAME, it) }
                 putExtra(AppBlockActivity.EXTRA_IS_RE_INTERVENTION, isReIntervention)
             }
             Log.d(TAG, "startBlockActivity: launching packageName=$packageName isReIntervention=$isReIntervention")
@@ -159,12 +156,11 @@ class ChillpillAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun startGracePeriodService(packageName: String, className: String?) {
+    private fun startGracePeriodService(packageName: String) {
         try {
             val intent = Intent(applicationContext, GracePeriodService::class.java).apply {
                 action = GracePeriodService.ACTION_START
                 putExtra(GracePeriodService.EXTRA_PACKAGE_NAME, packageName)
-                className?.let { putExtra(GracePeriodService.EXTRA_CLASS_NAME, it) }
             }
             ContextCompat.startForegroundService(applicationContext, intent)
         } catch (e: Exception) {

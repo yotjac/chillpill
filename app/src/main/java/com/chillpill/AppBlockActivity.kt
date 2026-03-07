@@ -1,6 +1,7 @@
 package com.chillpill
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
@@ -37,9 +38,8 @@ class AppBlockActivity : ComponentActivity() {
                         throw IllegalStateException("AppBlockActivity requires ChillpillApp")
                     }
                 val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
-                val className = intent.getStringExtra(EXTRA_CLASS_NAME)
                 val isReIntervention = intent.getBooleanExtra(EXTRA_IS_RE_INTERVENTION, false)
-                return AppBlockViewModel(app, packageName, className, isReIntervention) as T
+                return AppBlockViewModel(app, packageName, isReIntervention) as T
             }
         }
     }
@@ -90,27 +90,44 @@ class AppBlockActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Brings the monitored app back to the foreground (equivalent to switching back from recents).
+     * Uses FLAG_ACTIVITY_NEW_TASK only so the existing task is brought to front without clearing it.
+     */
     private fun launchTargetAppAndFinish() {
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: return
-        val className = intent.getStringExtra(EXTRA_CLASS_NAME)
         try {
-            val launchIntent = if (!className.isNullOrBlank()) {
-                Intent().apply {
-                    setClassName(packageName, className)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                }
-            } else {
-                packageManager.getLaunchIntentForPackage(packageName)?.apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                }
-            }
+            val launchIntent = buildLaunchIntentForPackage(packageName)
             if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(launchIntent)
             }
         } catch (e: Exception) {
             Log.e(TAG, "launchTargetAppAndFinish failed for packageName=$packageName", e)
+            try {
+                val fallback = packageManager.getLaunchIntentForPackage(packageName)
+                    ?: resolveLauncherActivity(packageName)
+                if (fallback != null) {
+                    fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(fallback)
+                }
+            } catch (e2: Exception) {
+                Log.e(TAG, "launchTargetAppAndFinish fallback failed for packageName=$packageName", e2)
+            }
         }
         finish()
+    }
+
+    private fun buildLaunchIntentForPackage(packageName: String): Intent? =
+        packageManager.getLaunchIntentForPackage(packageName) ?: resolveLauncherActivity(packageName)
+
+    @Suppress("DEPRECATION")
+    private fun resolveLauncherActivity(packageName: String): Intent? {
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val resolveInfos = packageManager.queryIntentActivities(launcherIntent, 0)
+        val match = resolveInfos.firstOrNull { it.activityInfo.packageName == packageName } ?: return null
+        val info = match.activityInfo
+        return Intent().setClassName(info.packageName.toString(), info.name)
     }
 
     private fun goHomeAndFinish() {
@@ -137,7 +154,6 @@ class AppBlockActivity : ComponentActivity() {
     companion object {
         private const val TAG = "AppBlockActivity"
         const val EXTRA_PACKAGE_NAME = "packageName"
-        const val EXTRA_CLASS_NAME = "className"
         const val EXTRA_IS_RE_INTERVENTION = "isReIntervention"
     }
 }
