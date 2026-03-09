@@ -69,7 +69,10 @@ fun ChillpillNavHost(
             popEnterTransition = { slideInHorizontally(tween(NavTransitionDuration)) { -it / 4 } },
             popExitTransition = { slideOutHorizontally(tween(NavTransitionDuration)) { it } }
         ) {
-            StatisticsScreen(onBack = { navController.popBackStack() })
+            StatisticsScreen(
+                app = app,
+                onBack = { navController.popBackStack() }
+            )
         }
     }
     return navController

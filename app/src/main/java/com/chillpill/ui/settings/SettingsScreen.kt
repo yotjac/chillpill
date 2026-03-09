@@ -28,35 +28,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.viewinterop.AndroidView
-import android.content.pm.PackageManager
-import android.widget.ImageView
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chillpill.ChillpillApp
-
-@Composable
-private fun AppIcon(packageName: String, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            ImageView(ctx).apply {
-                scaleType = ImageView.ScaleType.FIT_CENTER
-            }
-        },
-        update = { imageView ->
-            try {
-                imageView.setImageDrawable(context.packageManager.getApplicationIcon(packageName))
-            } catch (_: PackageManager.NameNotFoundException) {
-                imageView.setImageDrawable(context.getDrawable(android.R.drawable.sym_def_app_icon))
-            }
-        }
-    )
-}
+import com.chillpill.ui.common.AppIcon
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

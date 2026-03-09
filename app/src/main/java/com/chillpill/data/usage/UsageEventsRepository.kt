@@ -2,6 +2,11 @@ package com.chillpill.data.usage
 
 import kotlinx.coroutines.flow.Flow
 
+data class AppStats(
+    val openAttempts: Int,
+    val continueCount: Int
+)
+
 object UsageEventType {
     const val OPEN_ATTEMPT = "OPEN_ATTEMPT"
     const val WAIT_COMPLETED = "WAIT_COMPLETED"
@@ -44,5 +49,28 @@ class UsageEventsRepository(private val database: UsageDatabase) {
     suspend fun getWaitCompletedCountLast24h(packageName: String): Int {
         val since = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
         return dao.countEventsSince(packageName, UsageEventType.WAIT_COMPLETED, since)
+    }
+
+    /**
+     * Returns per-package stats (open attempts and continue count) for the given packages
+     * within the time range [since, now]. Empty map if packageNames is empty.
+     */
+    suspend fun getStatsForPackages(packageNames: Set<String>, since: Long): Map<String, AppStats> {
+        if (packageNames.isEmpty()) return emptyMap()
+        val rows = dao.countEventsGrouped(packageNames.toList(), since)
+        val map = mutableMapOf<String, AppStats>()
+        for (pkg in packageNames) {
+            map[pkg] = AppStats(openAttempts = 0, continueCount = 0)
+        }
+        for (row in rows) {
+            val current = map[row.packageName] ?: AppStats(0, 0)
+            val updated = when (row.eventType) {
+                UsageEventType.OPEN_ATTEMPT -> current.copy(openAttempts = row.count)
+                UsageEventType.WAIT_COMPLETED -> current.copy(continueCount = row.count)
+                else -> current
+            }
+            map[row.packageName] = updated
+        }
+        return map
     }
 }
