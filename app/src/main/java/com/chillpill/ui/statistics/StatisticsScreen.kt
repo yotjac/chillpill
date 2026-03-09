@@ -1,5 +1,9 @@
 package com.chillpill.ui.statistics
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Card
@@ -23,17 +28,35 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chillpill.ChillpillApp
 import com.chillpill.ui.common.AppIcon
+
+private const val FocusedAlpha = 1f
+private const val UnfocusedAlpha = 0.3f
+
+private val AttemptedColorHoney = Color(0xFFD4A017)
+private val ChartBackgroundDark = Color(0xFF1E293B)
+private val ChartGridLineAlpha = 0.15f
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,8 +69,13 @@ fun StatisticsScreen(
     val selectedRange by viewModel.selectedRange.collectAsStateWithLifecycle()
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
+    val focusedSeries by viewModel.focusedSeries.collectAsStateWithLifecycle()
 
-    Column(modifier = modifier.fillMaxSize()) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
         TopAppBar(
             title = { Text("Statistics") },
             navigationIcon = {
@@ -105,23 +133,23 @@ fun StatisticsScreen(
                     )
                 }
             } else {
-                val totalBlocked = stats.sumOf { it.openAttempts }
-                val totalContinued = stats.sumOf { it.continueCount }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
-                    Text(
-                        text = "Blocked: $totalBlocked",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
+                    LegendItem(
+                        label = "Attempted",
+                        color = AttemptedColorHoney,
+                        isFocused = focusedSeries == FocusedSeries.ATTEMPTED,
+                        onClick = { viewModel.onLegendClicked(FocusedSeries.ATTEMPTED) }
                     )
-                    Text(
-                        text = "Continued: $totalContinued",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
+                    LegendItem(
+                        label = "Entered",
+                        color = MaterialTheme.colorScheme.primary,
+                        isFocused = focusedSeries == FocusedSeries.ENTERED,
+                        onClick = { viewModel.onLegendClicked(FocusedSeries.ENTERED) }
                     )
                 }
                 LazyColumn(
@@ -129,7 +157,10 @@ fun StatisticsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(stats, key = { it.packageName }) { stat ->
-                        AppStatCard(stat = stat)
+                        AppStatCard(
+                            stat = stat,
+                            focusedSeries = focusedSeries
+                        )
                     }
                 }
             }
@@ -138,8 +169,39 @@ fun StatisticsScreen(
 }
 
 @Composable
+private fun LegendItem(
+    label: String,
+    color: androidx.compose.ui.graphics.Color,
+    isFocused: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onClick() }
+            .padding(vertical = 4.dp, horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = color,
+            modifier = Modifier.size(12.dp)
+        ) {}
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+@Composable
 private fun AppStatCard(
     stat: AppStatistic,
+    focusedSeries: FocusedSeries,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -160,27 +222,122 @@ private fun AppStatCard(
             )
             Spacer(modifier = Modifier.size(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = stat.appLabel,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(4.dp))
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Blocked: ${stat.openAttempts}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        text = stat.appLabel,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Continued: ${stat.continueCount}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        text = "Today: ${stat.attemptsToday} / ${stat.enteredToday}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                Spacer(modifier = Modifier.height(8.dp))
+                BarChart(
+                    buckets = stat.buckets,
+                    focusedSeries = focusedSeries,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(100.dp)
+                )
             }
+        }
+    }
+}
+
+/** Rounds up to a scale max divisible by 4 so grid lines at 25%, 50%, 75% are whole numbers. */
+private fun niceScaleMax(dataMax: Int): Int {
+    if (dataMax <= 0) return 4
+    return maxOf(4, ((dataMax + 3) / 4) * 4)
+}
+
+@Composable
+private fun BarChart(
+    buckets: List<BucketStat>,
+    focusedSeries: FocusedSeries,
+    modifier: Modifier = Modifier
+) {
+    val attemptedColor = AttemptedColorHoney
+    val enteredColor = MaterialTheme.colorScheme.primary
+    val maxValue = buckets.maxOfOrNull { maxOf(it.attempts, it.entered) }?.coerceAtLeast(1) ?: 1
+    val scaleMax = niceScaleMax(maxValue)
+    val barGapPx = 2.dp
+    val density = LocalDensity.current
+    val barInsetPx = with(density) { 6.dp.toPx() }
+    val gridLineColor = Color.White.copy(alpha = ChartGridLineAlpha)
+    val textMeasurer = rememberTextMeasurer()
+    val labelStyle = TextStyle(color = Color.White.copy(alpha = 0.45f), fontSize = 9.sp)
+
+    Canvas(modifier = modifier) {
+        if (buckets.isEmpty()) return@Canvas
+        val chartWidth = size.width
+        val chartHeight = size.height
+
+        drawRect(color = ChartBackgroundDark, size = size)
+
+        val sampleLabel = textMeasurer.measure(scaleMax.toString(), labelStyle)
+        val rightMargin = sampleLabel.size.width + 6.dp.toPx()
+        val barAreaWidth = chartWidth - rightMargin
+
+        val gridLineCount = 4
+        for (i in 1 until gridLineCount) {
+            val y = chartHeight * i / gridLineCount
+            drawLine(
+                color = gridLineColor,
+                start = Offset(0f, y),
+                end = Offset(barAreaWidth, y),
+                strokeWidth = 1f
+            )
+            val value = scaleMax * (gridLineCount - i) / gridLineCount
+            val measured = textMeasurer.measure(value.toString(), labelStyle)
+            drawText(
+                textLayoutResult = measured,
+                topLeft = Offset(
+                    chartWidth - measured.size.width - 2.dp.toPx(),
+                    y - measured.size.height / 2f
+                )
+            )
+        }
+
+        val barRegionWidth = barAreaWidth - 2 * barInsetPx
+        val barGroupWidth = (barRegionWidth - barGapPx.toPx() * (buckets.size - 1)) / buckets.size.toFloat()
+        val barWidth = (barGroupWidth - barGapPx.toPx()).coerceAtLeast(1f)
+
+        buckets.forEachIndexed { index, bucket ->
+            val left = barInsetPx + index * (barGroupWidth + barGapPx.toPx())
+            val attemptedAlpha = when (focusedSeries) {
+                FocusedSeries.NONE -> FocusedAlpha
+                FocusedSeries.ATTEMPTED -> FocusedAlpha
+                FocusedSeries.ENTERED -> UnfocusedAlpha
+            }
+            val enteredAlpha = when (focusedSeries) {
+                FocusedSeries.NONE -> FocusedAlpha
+                FocusedSeries.ATTEMPTED -> UnfocusedAlpha
+                FocusedSeries.ENTERED -> FocusedAlpha
+            }
+
+            val attemptedHeight = (bucket.attempts.toFloat() / scaleMax * chartHeight).coerceAtLeast(0f)
+            val enteredHeight = (bucket.entered.toFloat() / scaleMax * chartHeight).coerceAtLeast(0f)
+            val cornerRadius = CornerRadius(2.dp.toPx())
+
+            drawRoundRect(
+                color = attemptedColor.copy(alpha = attemptedAlpha),
+                topLeft = Offset(left, chartHeight - attemptedHeight),
+                size = Size(barWidth, attemptedHeight),
+                cornerRadius = cornerRadius
+            )
+            drawRoundRect(
+                color = enteredColor.copy(alpha = enteredAlpha),
+                topLeft = Offset(left, chartHeight - enteredHeight),
+                size = Size(barWidth, enteredHeight),
+                cornerRadius = cornerRadius
+            )
         }
     }
 }

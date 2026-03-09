@@ -7,6 +7,12 @@ data class AppStats(
     val continueCount: Int
 )
 
+data class DayStats(
+    val dayBucket: Long,
+    val attempts: Int,
+    val entered: Int
+)
+
 object UsageEventType {
     const val OPEN_ATTEMPT = "OPEN_ATTEMPT"
     const val WAIT_COMPLETED = "WAIT_COMPLETED"
@@ -72,5 +78,32 @@ class UsageEventsRepository(private val database: UsageDatabase) {
             map[row.packageName] = updated
         }
         return map
+    }
+
+    /**
+     * Returns per-package daily stats (attempts and entered per day bucket) for the given packages
+     * within [since, now]. Day bucket = timestamp / 86400000. Empty map if packageNames is empty.
+     */
+    suspend fun getDailyStatsForPackages(packageNames: Set<String>, since: Long): Map<String, List<DayStats>> {
+        if (packageNames.isEmpty()) return emptyMap()
+
+        val rows = dao.countEventsGroupedByDay(packageNames.toList(), since)
+        val byPackage = mutableMapOf<String, MutableMap<Long, DayStats>>()
+
+        for (row in rows) {
+            val dayMap = byPackage.getOrPut(row.packageName) { mutableMapOf() }
+            val current = dayMap[row.dayBucket] ?: DayStats(row.dayBucket, 0, 0)
+
+            val updated = when (row.eventType) {
+                UsageEventType.OPEN_ATTEMPT -> current.copy(attempts = row.count)
+                UsageEventType.WAIT_COMPLETED -> current.copy(entered = row.count)
+                else -> current
+            }
+            dayMap[row.dayBucket] = updated
+        }
+        
+        return byPackage.mapValues { (_, dayMap) ->
+            dayMap.values.sortedBy { it.dayBucket }
+        }
     }
 }

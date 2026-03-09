@@ -12,6 +12,13 @@ data class EventCountRow(
     val count: Int
 )
 
+data class DailyEventCountRow(
+    @ColumnInfo(name = "package_name") val packageName: String,
+    @ColumnInfo(name = "event_type") val eventType: String,
+    @ColumnInfo(name = "day_bucket") val dayBucket: Long,
+    val count: Int
+)
+
 @Dao
 interface UsageEventsDao {
 
@@ -31,4 +38,13 @@ interface UsageEventsDao {
         GROUP BY package_name, event_type
     """)
     suspend fun countEventsGrouped(packageNames: List<String>, since: Long): List<EventCountRow>
+
+    @Query("""
+        SELECT package_name, event_type, (timestamp / 86400000) AS day_bucket, COUNT(*) AS count
+        FROM usage_events
+        WHERE package_name IN (:packageNames) AND timestamp >= :since
+        GROUP BY package_name, event_type, (timestamp / 86400000)
+        ORDER BY day_bucket ASC
+    """)
+    suspend fun countEventsGroupedByDay(packageNames: List<String>, since: Long): List<DailyEventCountRow>
 }
