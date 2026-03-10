@@ -122,6 +122,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
 
     private fun tryHandleReturnFromBlock(pkg: String): Boolean {
         if (previousForegroundPackage != applicationContext.packageName) return false
+        if (pkg !in blockShownAt) return false // User was in main app (e.g. Settings), not the block screen
         blockShownAt.remove(pkg)
         startGracePeriodService(pkg)
         return true

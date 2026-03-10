@@ -121,7 +121,7 @@ class AppBlockActivity : ComponentActivity() {
     private fun buildLaunchIntentForPackage(packageName: String): Intent? =
         packageManager.getLaunchIntentForPackage(packageName) ?: resolveLauncherActivity(packageName)
 
-    private fun resolveLauncherActivity(packageName: String): Intent? {
+     private fun resolveLauncherActivity(packageName: String): Intent? {
         val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val resolveInfos = packageManager.queryIntentActivities(launcherIntent, 0)
         val match = resolveInfos.firstOrNull { it.activityInfo.packageName == packageName } ?: return null
