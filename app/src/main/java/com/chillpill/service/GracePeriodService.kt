@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.chillpill.AppBlockActivity
 import com.chillpill.ChillpillApp
 import com.chillpill.R
+import com.chillpill.data.usage.UsageEventType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -79,9 +80,15 @@ class GracePeriodService : Service() {
         Log.d(TAG, "onGraceExpired: pkg=$packageName currentForeground=$currentForeground")
         if (currentForeground == packageName) {
             Log.d(TAG, "onGraceExpired: user still in app, showing block")
+            withContext(Dispatchers.IO) {
+                app.usageEventsRepository.recordEvent(packageName, UsageEventType.GRACE_EXPIRED_WHILE_ACTIVE)
+            }
             startBlockActivity(packageName)
         } else {
             Log.d(TAG, "onGraceExpired: user left app, setting graceExpiredForPackage")
+            withContext(Dispatchers.IO) {
+                app.usageEventsRepository.recordEvent(packageName, UsageEventType.GRACE_EXPIRED_WHILE_AWAY)
+            }
             BlockingSharedState.setGraceExpiredForPackage(packageName)
         }
         stopSelf()

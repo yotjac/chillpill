@@ -84,6 +84,12 @@ class AppBlockViewModel(
 
     fun onGoHome() {
         viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                app.usageEventsRepository.recordEvent(
+                    packageName = packageName,
+                    eventType = UsageEventType.LEFT_APP
+                )
+            }
             _events.send(AppBlockEvent.RequestGoHome)
         }
     }

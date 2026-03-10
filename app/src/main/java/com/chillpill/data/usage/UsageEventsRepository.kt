@@ -18,6 +18,8 @@ object UsageEventType {
     const val WAIT_COMPLETED = "WAIT_COMPLETED"
     const val CONTINUED = "CONTINUED"
     const val LEFT_APP = "LEFT_APP"
+    const val GRACE_EXPIRED_WHILE_ACTIVE = "GRACE_EXPIRED_WHILE_ACTIVE"
+    const val GRACE_EXPIRED_WHILE_AWAY = "GRACE_EXPIRED_WHILE_AWAY"
 }
 
 class UsageEventsRepository(private val database: UsageDatabase) {
