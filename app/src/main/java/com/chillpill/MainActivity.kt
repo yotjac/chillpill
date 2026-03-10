@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
                     ChillpillNavHost(
                         app = app,
                         onFixPermissions = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                        onFixUsageAccess = { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) },
                         openSettingsOnLaunch = openSettingsOnLaunch
                     )
                 }

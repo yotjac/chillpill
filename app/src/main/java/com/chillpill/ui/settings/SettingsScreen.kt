@@ -14,7 +14,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.Checkbox
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -40,14 +41,13 @@ import com.chillpill.ui.common.AppIcon
 fun SettingsScreen(
     app: ChillpillApp,
     onBack: () -> Unit,
+    onEditMonitoredApps: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.Factory(app))
     val waitTimeSecondsInput by viewModel.waitTimeSecondsInput.collectAsStateWithLifecycle()
     val gracePeriodMinutesInput by viewModel.gracePeriodMinutesInput.collectAsStateWithLifecycle()
-    val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
-    val monitoredPackages by viewModel.monitoredPackages.collectAsStateWithLifecycle()
-    val appSearchQuery by viewModel.appSearchQuery.collectAsStateWithLifecycle()
+    val monitoredAppsInfo by viewModel.monitoredAppsInfo.collectAsStateWithLifecycle()
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
@@ -103,48 +103,57 @@ fun SettingsScreen(
             )
 
             // Monitored apps section
-            Text(
-                text = "Monitored apps",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(top = 24.dp, bottom = 8.dp)
-            )
-            OutlinedTextField(
-                value = appSearchQuery,
-                onValueChange = { viewModel.onSearchQueryChanged(it) },
-                label = { Text("Search apps") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            val query = appSearchQuery.trim().lowercase()
-            val filteredApps = if (query.isEmpty()) installedApps
-                else installedApps.filter { it.label.lowercase().contains(query) }
-            LazyColumn(
+            Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(0.dp)
+                    .fillMaxWidth()
+                    .padding(top = 24.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                items(filteredApps, key = { it.packageName }) { appInfo ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = appInfo.packageName in monitoredPackages,
-                            onCheckedChange = { viewModel.onMonitoredChanged(appInfo.packageName, it) }
-                        )
-                        Spacer(modifier = Modifier.size(8.dp))
-                        AppIcon(packageName = appInfo.packageName, modifier = Modifier.size(40.dp))
-                        Spacer(modifier = Modifier.size(12.dp))
-                        Text(
-                            text = appInfo.label,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f)
-                        )
+                Text(
+                    text = "Monitored apps",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onEditMonitoredApps) {
+                    Icon(Icons.Filled.Edit, contentDescription = "Edit monitored apps")
+                }
+            }
+            if (monitoredAppsInfo.isEmpty()) {
+                Text(
+                    text = "No apps monitored",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 16.dp)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(monitoredAppsInfo, key = { it.packageName }) { appInfo ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AppIcon(packageName = appInfo.packageName, modifier = Modifier.size(40.dp))
+                            Spacer(modifier = Modifier.size(12.dp))
+                            Text(
+                                text = appInfo.label,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = { viewModel.removeMonitoredApp(appInfo.packageName) },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(Icons.Filled.Delete, contentDescription = "Remove from monitored")
+                            }
+                        }
                     }
                 }
             }

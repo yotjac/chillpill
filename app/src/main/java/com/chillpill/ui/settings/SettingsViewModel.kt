@@ -1,5 +1,7 @@
 package com.chillpill.ui.settings
 
+import android.app.usage.UsageStatsManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.lifecycle.ViewModel
@@ -42,6 +44,9 @@ class SettingsViewModel(
     private val _monitoredPackages = MutableStateFlow<Set<String>>(emptySet())
     val monitoredPackages: StateFlow<Set<String>> = _monitoredPackages.asStateFlow()
 
+    private val _monitoredAppsInfo = MutableStateFlow<List<AppInfo>>(emptyList())
+    val monitoredAppsInfo: StateFlow<List<AppInfo>> = _monitoredAppsInfo.asStateFlow()
+
     private val _appSearchQuery = MutableStateFlow("")
     val appSearchQuery: StateFlow<String> = _appSearchQuery.asStateFlow()
 
@@ -54,7 +59,27 @@ class SettingsViewModel(
             app.monitoredAppsRepository.monitoredPackages.first().let { set ->
                 _monitoredPackages.value = set
             }
+            loadMonitoredAppsInfo()
             loadInstalledApps()
+        }
+    }
+
+    private fun loadMonitoredAppsInfo() {
+        viewModelScope.launch {
+            val packages = _monitoredPackages.value
+            val list = withContext(Dispatchers.IO) {
+                val pm = app.packageManager
+                packages.mapNotNull { packageName ->
+                    try {
+                        val applicationInfo = pm.getApplicationInfo(packageName, 0)
+                        val label = pm.getApplicationLabel(applicationInfo).toString()
+                        AppInfo(packageName = packageName, label = label)
+                    } catch (_: PackageManager.NameNotFoundException) {
+                        null
+                    }
+                }.sortedBy { it.label.lowercase() }
+            }
+            _monitoredAppsInfo.value = list
         }
     }
 
@@ -77,7 +102,7 @@ class SettingsViewModel(
 
                 val packageNames = (launcherPackages + monitoredSet).distinct()
 
-                packageNames.mapNotNull { packageName ->
+                val appList = packageNames.mapNotNull { packageName ->
                     try {
                         val applicationInfo = pm.getApplicationInfo(packageName, 0)
                         val label = pm.getApplicationLabel(applicationInfo).toString()
@@ -85,10 +110,37 @@ class SettingsViewModel(
                     } catch (_: PackageManager.NameNotFoundException) {
                         null
                     }
-                }.sortedBy { it.label.lowercase() }
+                }
+                sortAppsByUsage(app.applicationContext, appList)
             }
             _installedApps.value = apps
         }
+    }
+
+    /**
+     * Sorts apps by global device usage (UsageStatsManager totalTimeInForeground) when available,
+     * otherwise alphabetically by label.
+     */
+    private fun sortAppsByUsage(context: Context, apps: List<AppInfo>): List<AppInfo> {
+        val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+            ?: return apps.sortedBy { it.label.lowercase() }
+        val endTime = System.currentTimeMillis()
+        val startTime = endTime - 7 * 24 * 60 * 60 * 1000L
+        @Suppress("DEPRECATION")
+        val statsList = usageStatsManager.queryUsageStats(
+            UsageStatsManager.INTERVAL_WEEKLY,
+            startTime,
+            endTime
+        ) ?: return apps.sortedBy { it.label.lowercase() }
+        val totalTimeByPackage = mutableMapOf<String, Long>()
+        for (stats in statsList) {
+            val pkg = stats.packageName
+            totalTimeByPackage[pkg] = (totalTimeByPackage[pkg] ?: 0L) + stats.totalTimeInForeground
+        }
+        return apps.sortedWith(
+            compareByDescending<AppInfo> { totalTimeByPackage[it.packageName] ?: 0L }
+                .thenBy { it.label.lowercase() }
+        )
     }
 
     fun onWaitTimeChanged(s: String) {
@@ -122,6 +174,15 @@ class SettingsViewModel(
         viewModelScope.launch {
             app.monitoredAppsRepository.setMonitored(_monitoredPackages.value)
         }
+        loadMonitoredAppsInfo()
+    }
+
+    fun removeMonitoredApp(packageName: String) {
+        _monitoredPackages.value = _monitoredPackages.value - packageName
+        viewModelScope.launch {
+            app.monitoredAppsRepository.setMonitored(_monitoredPackages.value)
+        }
+        loadMonitoredAppsInfo()
     }
 
     fun onSearchQueryChanged(query: String) {

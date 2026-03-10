@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +45,7 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
     onOpenStatistics: () -> Unit,
     onFixPermissions: () -> Unit,
+    onFixUsageAccess: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val viewModel: HomeViewModel = viewModel(
@@ -52,6 +55,7 @@ fun HomeScreen(
         }
     )
     val permissionsOk by viewModel.permissionsOk.collectAsStateWithLifecycle()
+    val showUsageAccessBanner by viewModel.showUsageAccessBanner.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { viewModel.refreshPermissions() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshPermissions() }
@@ -59,6 +63,12 @@ fun HomeScreen(
     Column(modifier = modifier.fillMaxSize()) {
         if (!permissionsOk) {
             PermissionBanner(onFixHereClick = onFixPermissions)
+        }
+        if (showUsageAccessBanner) {
+            DismissiblePermissionBanner(
+                onFixHereClick = onFixUsageAccess,
+                onDismiss = { viewModel.dismissUsageAccessBanner() }
+            )
         }
         Column(
             modifier = Modifier
@@ -108,7 +118,7 @@ private fun PermissionBanner(
         shape = RoundedCornerShape(0.dp)
     ) {
         val annotatedString = buildAnnotatedString {
-            append("Usage access and accessibility permission required: ")
+            append("Accessibility permission required: ")
             val fixHereStart = length
             append("fix here")
             addStringAnnotation(tag = "fix_here", annotation = "", start = fixHereStart, end = length)
@@ -141,6 +151,66 @@ private fun PermissionBanner(
                     }
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun DismissiblePermissionBanner(
+    onFixHereClick: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = AlertBannerBackground,
+        shape = RoundedCornerShape(0.dp)
+    ) {
+        val annotatedString = buildAnnotatedString {
+            append("Usage access improves app sorting: ")
+            val fixHereStart = length
+            append("fix here")
+            addStringAnnotation(tag = "fix_here", annotation = "", start = fixHereStart, end = length)
+            addStyle(
+                style = SpanStyle(color = AlertBannerLink, textDecoration = TextDecoration.Underline),
+                start = fixHereStart,
+                end = length
+            )
+        }
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = "Permission optional",
+                tint = AlertBannerText,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            ClickableText(
+                text = annotatedString,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    color = AlertBannerText,
+                    textDecoration = TextDecoration.None
+                ),
+                modifier = Modifier.weight(1f),
+                onClick = { offset ->
+                    annotatedString.getStringAnnotations("fix_here", offset, offset + 1).firstOrNull()?.let {
+                        onFixHereClick()
+                    }
+                }
+            )
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Dismiss",
+                    tint = AlertBannerText
+                )
+            }
         }
     }
 }
