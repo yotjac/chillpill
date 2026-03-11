@@ -59,6 +59,14 @@ class AppBlockActivity : ComponentActivity() {
             return
         }
         Log.d(TAG, "onCreate: showing block screen for packageName=$packageName")
+
+        val appName = try {
+            val appInfo = packageManager.getApplicationInfo(packageName, 0)
+            packageManager.getApplicationLabel(appInfo).toString()
+        } catch (e: Exception) {
+            packageName
+        }
+
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
@@ -83,6 +91,7 @@ class AppBlockActivity : ComponentActivity() {
                     progress = progress,
                     openCount24h = openCount24h,
                     isReIntervention = viewModel.isReIntervention,
+                    appName = appName,
                     onContinue = viewModel::onContinue,
                     onGoHome = viewModel::onGoHome
                 )
