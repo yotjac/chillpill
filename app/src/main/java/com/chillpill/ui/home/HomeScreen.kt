@@ -60,43 +60,52 @@ fun HomeScreen(
     LaunchedEffect(Unit) { viewModel.refreshPermissions() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshPermissions() }
 
-    Column(modifier = modifier.fillMaxSize()) {
-        if (!permissionsOk) {
-            PermissionBanner(onFixHereClick = onFixPermissions)
-        }
-        if (showUsageAccessBanner) {
-            DismissiblePermissionBanner(
-                onFixHereClick = onFixUsageAccess,
-                onDismiss = { viewModel.dismissUsageAccessBanner() }
-            )
-        }
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = "Chillpill",
-                style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Spacer(modifier = Modifier.height(32.dp))
-            Button(
-                onClick = onOpenSettings,
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = MaterialTheme.shapes.medium
-            ) {
-                Text("Settings")
+    Surface(
+        modifier = modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (!permissionsOk) {
+                PermissionBanner(onFixHereClick = onFixPermissions)
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            Button(
-                onClick = onOpenStatistics,
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = MaterialTheme.shapes.medium
+            if (showUsageAccessBanner) {
+                DismissiblePermissionBanner(
+                    onFixHereClick = onFixUsageAccess,
+                    onDismiss = { viewModel.dismissUsageAccessBanner() }
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                Text("Statistics")
+                Text(
+                    text = "Chillpill",
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.height(32.dp))
+                Button(
+                    onClick = onOpenSettings,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text("Settings")
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = onOpenStatistics,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text("Statistics")
+                }
             }
         }
     }

@@ -11,12 +11,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.chillpill.ui.home.HomeScreen
+import com.chillpill.ui.setup.SetupScreen
 import com.chillpill.ui.settings.AppSelectionScreen
 import com.chillpill.ui.settings.SettingsScreen
 import com.chillpill.ui.statistics.StatisticsScreen
 
 object Routes {
     const val HOME = "home"
+    const val SETUP = "setup"
     const val SETTINGS = "settings"
     const val APP_SELECTION = "app_selection"
     const val STATISTICS = "statistics"
@@ -27,6 +29,7 @@ private const val NavTransitionDuration = 300
 @Composable
 fun ChillpillNavHost(
     app: ChillpillApp,
+    startDestination: String,
     onFixPermissions: () -> Unit = {},
     onFixUsageAccess: () -> Unit = {},
     openSettingsOnLaunch: Boolean = false,
@@ -37,8 +40,27 @@ fun ChillpillNavHost(
     }
     NavHost(
         navController = navController,
-        startDestination = Routes.HOME
+        startDestination = startDestination
     ) {
+        composable(
+            route = Routes.SETUP,
+            enterTransition = { slideInHorizontally(tween(NavTransitionDuration)) { it } },
+            exitTransition = { slideOutHorizontally(tween(NavTransitionDuration)) { -it / 4 } },
+            popEnterTransition = { slideInHorizontally(tween(NavTransitionDuration)) { -it / 4 } },
+            popExitTransition = { slideOutHorizontally(tween(NavTransitionDuration)) { it } }
+        ) {
+            SetupScreen(
+                app = app,
+                onFixPermissions = onFixPermissions,
+                onFixUsageAccess = onFixUsageAccess,
+                onOpenAppSelection = { navController.navigate(Routes.APP_SELECTION) },
+                onComplete = {
+                    navController.navigate(Routes.HOME) {
+                        popUpTo(Routes.SETUP) { inclusive = true }
+                    }
+                }
+            )
+        }
         composable(
             route = Routes.HOME,
             enterTransition = { slideInHorizontally(tween(NavTransitionDuration)) { it } },
