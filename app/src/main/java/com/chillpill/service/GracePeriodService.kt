@@ -81,6 +81,7 @@ class GracePeriodService : Service() {
         if (currentForeground == packageName) {
             Log.d(TAG, "onGraceExpired: user still in app, showing block")
             withContext(Dispatchers.IO) {
+                app.usageEventsRepository.recordEvent(packageName, UsageEventType.OPEN_ATTEMPT)
                 app.usageEventsRepository.recordEvent(packageName, UsageEventType.GRACE_EXPIRED_WHILE_ACTIVE)
             }
             startBlockActivity(packageName)
