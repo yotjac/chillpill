@@ -84,7 +84,7 @@ class UsageEventsRepository(private val database: UsageDatabase) {
 
     /**
      * Returns per-package daily stats (attempts and entered per day bucket) for the given packages
-     * within [since, now]. Day bucket = timestamp / 86400000. Empty map if packageNames is empty.
+     * within [since, now]. Day bucket = timestamp / 86400000 (UTC). Empty map if packageNames is empty.
      */
     suspend fun getDailyStatsForPackages(packageNames: Set<String>, since: Long): Map<String, List<DayStats>> {
         if (packageNames.isEmpty()) return emptyMap()
@@ -107,5 +107,38 @@ class UsageEventsRepository(private val database: UsageDatabase) {
         return byPackage.mapValues { (_, dayMap) ->
             dayMap.values.sortedBy { it.dayBucket }
         }
+    }
+
+    /**
+     * Returns per-package daily stats for the given packages, one [DayStats] per (since, until) range.
+     * Each range is typically one local calendar day [startOfDayMs, startOfNextDayMs).
+     * The i-th element in each list has dayBucket = i (used as index; last index = "today" for week view).
+     * Empty map if packageNames or dayRanges is empty.
+     */
+    suspend fun getDailyStatsForPackagesInRanges(
+        packageNames: Set<String>,
+        dayRanges: List<Pair<Long, Long>>
+    ): Map<String, List<DayStats>> {
+        if (packageNames.isEmpty() || dayRanges.isEmpty()) return emptyMap()
+        val packagesList = packageNames.toList()
+        val result = mutableMapOf<String, MutableList<DayStats>>()
+        for (pkg in packageNames) {
+            result[pkg] = MutableList(dayRanges.size) { DayStats(it.toLong(), 0, 0) }
+        }
+        for ((index, range) in dayRanges.withIndex()) {
+            val (since, until) = range
+            val rows = dao.countEventsGroupedInRange(packagesList, since, until)
+            for (row in rows) {
+                val list = result[row.packageName] ?: continue
+                val current = list[index]
+                val updated = when (row.eventType) {
+                    UsageEventType.OPEN_ATTEMPT -> current.copy(attempts = row.count)
+                    UsageEventType.WAIT_COMPLETED -> current.copy(entered = row.count)
+                    else -> current
+                }
+                list[index] = updated
+            }
+        }
+        return result
     }
 }

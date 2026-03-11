@@ -40,6 +40,14 @@ interface UsageEventsDao {
     suspend fun countEventsGrouped(packageNames: List<String>, since: Long): List<EventCountRow>
 
     @Query("""
+        SELECT package_name, event_type, COUNT(*) as count
+        FROM usage_events
+        WHERE package_name IN (:packageNames) AND timestamp >= :since AND timestamp < :until
+        GROUP BY package_name, event_type
+    """)
+    suspend fun countEventsGroupedInRange(packageNames: List<String>, since: Long, until: Long): List<EventCountRow>
+
+    @Query("""
         SELECT package_name, event_type, (timestamp / 86400000) AS day_bucket, COUNT(*) AS count
         FROM usage_events
         WHERE package_name IN (:packageNames) AND timestamp >= :since

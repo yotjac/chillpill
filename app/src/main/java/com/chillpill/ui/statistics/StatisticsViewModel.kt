@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 
 private const val DAY_MS = 24 * 60 * 60 * 1000L
 private const val REFRESH_INTERVAL_MS = 15_000L
@@ -87,6 +88,26 @@ class StatisticsViewModel(
 
     private fun totalDaysForRange(range: TimeRange): Int = (range.durationMs / DAY_MS).toInt()
 
+    /** Returns 7 (startMs, endMs) pairs for the last 7 local calendar days (index 0 = 6 days ago, 6 = today). End is exclusive. */
+    private fun getLocalWeekDayRanges(): List<Pair<Long, Long>> {
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        val startOfToday = cal.timeInMillis
+        val ranges = mutableListOf<Pair<Long, Long>>()
+        for (daysAgo in 6 downTo 0) {
+            cal.timeInMillis = startOfToday
+            cal.add(Calendar.DAY_OF_MONTH, -daysAgo)
+            val start = cal.timeInMillis
+            cal.add(Calendar.DAY_OF_MONTH, 1)
+            val until = cal.timeInMillis
+            ranges.add(start to until)
+        }
+        return ranges
+    }
+
     private fun dailyToBuckets(daily: List<DayStats>, range: TimeRange): List<BucketStat> {
         val todayBucket = System.currentTimeMillis() / DAY_MS
         val count = bucketCount(range)
@@ -117,29 +138,52 @@ class StatisticsViewModel(
             withContext(Dispatchers.IO) {
                 val packages = app.monitoredAppsRepository.monitoredPackages.first()
                 val range = _selectedRange.value
-                val totalDays = totalDaysForRange(range)
-                val todayBucket = System.currentTimeMillis() / DAY_MS
-                val startDayBucket = todayBucket - totalDays + 1
-                val since = startDayBucket * DAY_MS
-                val dailyMap = app.usageEventsRepository.getDailyStatsForPackages(packages, since)
                 val pm = app.packageManager
-                val list = packages.map { packageName ->
-                    val label = try {
-                        val appInfo = pm.getApplicationInfo(packageName, 0)
-                        pm.getApplicationLabel(appInfo).toString()
-                    } catch (_: PackageManager.NameNotFoundException) {
-                        packageName
+                val list = if (range == TimeRange.WEEK) {
+                    val dayRanges = getLocalWeekDayRanges()
+                    val dailyMap = app.usageEventsRepository.getDailyStatsForPackagesInRanges(packages, dayRanges)
+                    packages.map { packageName ->
+                        val label = try {
+                            val appInfo = pm.getApplicationInfo(packageName, 0)
+                            pm.getApplicationLabel(appInfo).toString()
+                        } catch (_: PackageManager.NameNotFoundException) {
+                            packageName
+                        }
+                        val daily = dailyMap[packageName] ?: List(7) { DayStats(it.toLong(), 0, 0) }
+                        val buckets = daily.map { BucketStat(it.attempts, it.entered) }
+                        val todayStats = daily.getOrNull(6)
+                        AppStatistic(
+                            packageName = packageName,
+                            appLabel = label,
+                            buckets = buckets,
+                            attemptsToday = todayStats?.attempts ?: 0,
+                            enteredToday = todayStats?.entered ?: 0
+                        )
                     }
-                    val daily = dailyMap[packageName] ?: emptyList()
-                    val buckets = dailyToBuckets(daily, range)
-                    val todayStats = daily.find { it.dayBucket == todayBucket }
-                    AppStatistic(
-                        packageName = packageName,
-                        appLabel = label,
-                        buckets = buckets,
-                        attemptsToday = todayStats?.attempts ?: 0,
-                        enteredToday = todayStats?.entered ?: 0
-                    )
+                } else {
+                    val totalDays = totalDaysForRange(range)
+                    val todayBucket = System.currentTimeMillis() / DAY_MS
+                    val startDayBucket = todayBucket - totalDays + 1
+                    val since = startDayBucket * DAY_MS
+                    val dailyMap = app.usageEventsRepository.getDailyStatsForPackages(packages, since)
+                    packages.map { packageName ->
+                        val label = try {
+                            val appInfo = pm.getApplicationInfo(packageName, 0)
+                            pm.getApplicationLabel(appInfo).toString()
+                        } catch (_: PackageManager.NameNotFoundException) {
+                            packageName
+                        }
+                        val daily = dailyMap[packageName] ?: emptyList()
+                        val buckets = dailyToBuckets(daily, range)
+                        val todayStats = daily.find { it.dayBucket == todayBucket }
+                        AppStatistic(
+                            packageName = packageName,
+                            appLabel = label,
+                            buckets = buckets,
+                            attemptsToday = todayStats?.attempts ?: 0,
+                            enteredToday = todayStats?.entered ?: 0
+                        )
+                    }
                 }.sortedByDescending { it.buckets.sumOf { b -> b.attempts } }
                 _stats.value = list
             }
