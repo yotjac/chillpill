@@ -56,11 +56,13 @@ class SettingsViewModel(
                 _waitTimeSecondsInput.value = settings.waitTimeSeconds.toString()
                 _gracePeriodMinutesInput.value = settings.gracePeriodMinutes.toString()
             }
-            app.monitoredAppsRepository.monitoredPackages.first().let { set ->
-                _monitoredPackages.value = set
-            }
-            loadMonitoredAppsInfo()
             loadInstalledApps()
+        }
+        viewModelScope.launch {
+            app.monitoredAppsRepository.monitoredPackages.collect { set ->
+                _monitoredPackages.value = set
+                loadMonitoredAppsInfo()
+            }
         }
     }
 
