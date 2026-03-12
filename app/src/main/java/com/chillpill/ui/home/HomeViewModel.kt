@@ -52,6 +52,12 @@ class HomeViewModel(
         observeMonitoredAppsAndStats()
     }
 
+    fun refreshStats() {
+        viewModelScope.launch(Dispatchers.IO) {
+            updateTodayStats(_monitoredPackages.value)
+        }
+    }
+
     fun refreshPermissions() {
         val expected = ComponentName(app, ChillpillAccessibilityService::class.java).flattenToString()
         val enabled = Settings.Secure.getString(

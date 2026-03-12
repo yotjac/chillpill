@@ -174,14 +174,14 @@ fun AppBlockScreen(
                     Text(
                         text = openCount24h.toString(),
                         style = MaterialTheme.typography.displayLarge.copy(fontWeight = FontWeight.ExtraBold),
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onSurface,
                         textAlign = TextAlign.Center
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = stringResource(R.string.block_attempts_last_24h, appName),
                         style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                        color = Color.White.copy(alpha = 0.9f),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f),
                         textAlign = TextAlign.Center
                     )
                 }

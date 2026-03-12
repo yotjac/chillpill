@@ -55,7 +55,6 @@ private const val FocusedAlpha = 1f
 private const val UnfocusedAlpha = 0.3f
 
 private val AttemptedColorHoney = Color(0xFFD4A017)
-private val ChartBackgroundDark = Color(0xFF1E293B)
 private val ChartGridLineAlpha = 0.15f
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -265,21 +264,23 @@ private fun BarChart(
 ) {
     val attemptedColor = AttemptedColorHoney
     val enteredColor = MaterialTheme.colorScheme.primary
+    val chartBackgroundColor = MaterialTheme.colorScheme.surface
+    val onChartColor = MaterialTheme.colorScheme.onSurface
     val maxValue = buckets.maxOfOrNull { maxOf(it.attempts, it.entered) }?.coerceAtLeast(1) ?: 1
     val scaleMax = niceScaleMax(maxValue)
     val barGapPx = 2.dp
     val density = LocalDensity.current
     val barInsetPx = with(density) { 6.dp.toPx() }
-    val gridLineColor = Color.White.copy(alpha = ChartGridLineAlpha)
+    val gridLineColor = onChartColor.copy(alpha = ChartGridLineAlpha)
     val textMeasurer = rememberTextMeasurer()
-    val labelStyle = TextStyle(color = Color.White.copy(alpha = 0.45f), fontSize = 9.sp)
+    val labelStyle = TextStyle(color = onChartColor.copy(alpha = 0.45f), fontSize = 9.sp)
 
     Canvas(modifier = modifier) {
         if (buckets.isEmpty()) return@Canvas
         val chartWidth = size.width
         val chartHeight = size.height
 
-        drawRect(color = ChartBackgroundDark, size = size)
+        drawRect(color = chartBackgroundColor, size = size)
 
         val sampleLabel = textMeasurer.measure(scaleMax.toString(), labelStyle)
         val rightMargin = sampleLabel.size.width + 6.dp.toPx()
