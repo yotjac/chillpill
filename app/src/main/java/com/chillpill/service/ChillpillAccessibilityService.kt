@@ -4,7 +4,6 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.util.Log
-import androidx.core.content.ContextCompat
 import android.view.accessibility.AccessibilityEvent
 import com.chillpill.AppBlockActivity
 import com.chillpill.ChillpillApp
@@ -26,9 +25,8 @@ class ChillpillAccessibilityService : AccessibilityService() {
         SupervisorJob() + Dispatchers.Default.limitedParallelism(1)
     )
 
-    /** Previous foreground package; used to detect "leaving" and "return from block". Updated at end of each event. Only accessed from eventProcessorScope. */
+    /** Previous foreground package; used to detect "leaving" for grace extension. Updated at end of each event. Only accessed from eventProcessorScope. */
     private var previousForegroundPackage: String? = null
-    private val blockShownAt = mutableMapOf<String, Long>()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -83,11 +81,6 @@ class ChillpillAccessibilityService : AccessibilityService() {
                 setPreviousForeground(pkg)
                 return
             }
-            if (tryHandleReturnFromBlock(pkg)) {
-                Log.d(TAG, "processEvent: handled return from block, starting grace for pkg=$pkg")
-                setPreviousForeground(pkg)
-                return
-            }
             if (BlockingSharedState.isInGracePeriod(pkg)) {
                 Log.d(TAG, "processEvent: pkg=$pkg in grace period, allowing")
                 setPreviousForeground(pkg)
@@ -123,19 +116,10 @@ class ChillpillAccessibilityService : AccessibilityService() {
         return true
     }
 
-    private fun tryHandleReturnFromBlock(pkg: String): Boolean {
-        if (previousForegroundPackage != applicationContext.packageName) return false
-        if (pkg !in blockShownAt) return false // User was in main app (e.g. Settings), not the block screen
-        blockShownAt.remove(pkg)
-        startGracePeriodService(pkg)
-        return true
-    }
-
     private suspend fun handleEnteringRestrictedAppFromElsewhere(pkg: String) {
         withContext(Dispatchers.IO) {
             app.usageEventsRepository.recordEvent(pkg, UsageEventType.OPEN_ATTEMPT)
         }
-        blockShownAt[pkg] = System.currentTimeMillis()
         startBlockActivity(pkg, isReIntervention = false)
     }
 
@@ -157,18 +141,6 @@ class ChillpillAccessibilityService : AccessibilityService() {
             Log.d(TAG, "startBlockActivity: startActivity returned for packageName=$packageName (if block does not appear, check Android 10+ background start restrictions)")
         } catch (e: Exception) {
             Log.e(TAG, "startBlockActivity failed for packageName=$packageName", e)
-        }
-    }
-
-    private fun startGracePeriodService(packageName: String) {
-        try {
-            val intent = Intent(applicationContext, GracePeriodService::class.java).apply {
-                action = GracePeriodService.ACTION_START
-                putExtra(GracePeriodService.EXTRA_PACKAGE_NAME, packageName)
-            }
-            ContextCompat.startForegroundService(applicationContext, intent)
-        } catch (e: Exception) {
-            Log.e(TAG, "startGracePeriodService failed for packageName=$packageName", e)
         }
     }
 

@@ -12,11 +12,13 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import com.chillpill.service.GracePeriodService
 import com.chillpill.ui.appblock.AppBlockEvent
 import com.chillpill.ui.appblock.AppBlockScreen
 import com.chillpill.ui.appblock.AppBlockViewModel
@@ -105,6 +107,7 @@ class AppBlockActivity : ComponentActivity() {
      */
     private fun launchTargetAppAndFinish() {
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: return
+        startGracePeriodService(packageName)
         try {
             val launchIntent = buildLaunchIntentForPackage(packageName)
             if (launchIntent != null) {
@@ -125,6 +128,18 @@ class AppBlockActivity : ComponentActivity() {
             }
         }
         finish()
+    }
+
+    private fun startGracePeriodService(packageName: String) {
+        try {
+            val intent = Intent(this, GracePeriodService::class.java).apply {
+                action = GracePeriodService.ACTION_START
+                putExtra(GracePeriodService.EXTRA_PACKAGE_NAME, packageName)
+            }
+            ContextCompat.startForegroundService(this, intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "startGracePeriodService failed for packageName=$packageName", e)
+        }
     }
 
     private fun buildLaunchIntentForPackage(packageName: String): Intent? =

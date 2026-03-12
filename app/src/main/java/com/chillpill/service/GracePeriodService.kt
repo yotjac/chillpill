@@ -5,10 +5,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.usage.UsageEvents
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import android.app.usage.UsageStatsManager
 import androidx.core.app.NotificationCompat
 import com.chillpill.AppBlockActivity
 import com.chillpill.ChillpillApp
@@ -74,9 +77,30 @@ class GracePeriodService : Service() {
         }
     }
 
+    private fun queryActualForegroundPackage(): String? {
+        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+            ?: return null
+        val now = System.currentTimeMillis()
+        val usageEvents = usm.queryEvents(now - 600_000, now)
+        var lastPkg: String? = null
+        val event = UsageEvents.Event()
+        val targetType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            UsageEvents.Event.ACTIVITY_RESUMED
+        } else {
+            @Suppress("DEPRECATION")
+            UsageEvents.Event.MOVE_TO_FOREGROUND
+        }
+        while (usageEvents.hasNextEvent()) {
+            usageEvents.getNextEvent(event)
+            if (event.eventType == targetType) lastPkg = event.packageName
+        }
+        return lastPkg
+    }
+
     private suspend fun onGraceExpired(packageName: String) {
         BlockingSharedState.clearGraceForPackage(packageName)
-        val currentForeground = BlockingSharedState.currentForegroundPackage
+        val currentForeground = queryActualForegroundPackage()
+            ?: BlockingSharedState.currentForegroundPackage
         Log.d(TAG, "onGraceExpired: pkg=$packageName currentForeground=$currentForeground")
         if (currentForeground == packageName) {
             Log.d(TAG, "onGraceExpired: user still in app, showing block")

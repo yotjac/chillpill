@@ -237,17 +237,15 @@ Key methods: `isInGracePeriod(pkg)`, `setGraceValidUntil(pkg, millis)`,
   2. If `graceExpiredForPackage` matches → **re-intervention** (show block screen again)
   3. If package is in grace period → allow
   4. Otherwise → record `OPEN_ATTEMPT`, start `AppBlockActivity`
-- Starts `GracePeriodService` when a grace period needs to begin
-- Stops `GracePeriodService` when the user leaves the restricted app
+- Does **not** start `GracePeriodService`; the block activity starts it when the user taps "Continue", so re-interventions always get a new grace timer.
 
 ### 6.3 GracePeriodService (Foreground Service)
 
+- Started by `AppBlockActivity` when the user taps "Continue" (initial block or re-intervention). This guarantees the grace timer runs after every block dismissal.
 - Shows an ongoing notification with a countdown
-- On expiry:
-  - If user is still in the restricted app → records `GRACE_EXPIRED_WHILE_ACTIVE`,
-    starts `AppBlockActivity` as re-intervention
-  - If user navigated away → records `GRACE_EXPIRED_WHILE_AWAY`,
-    sets `BlockingSharedState.graceExpiredForPackage`
+- On expiry, determines whether the user is still in the restricted app via **UsageStatsManager** (`queryEvents` over the last 10 minutes to capture the most recent `ACTIVITY_RESUMED` event), falling back to `BlockingSharedState.currentForegroundPackage` if usage-stats query fails:
+  - If user is still in the restricted app → records `GRACE_EXPIRED_WHILE_ACTIVE`, starts `AppBlockActivity` as re-intervention
+  - If user navigated away → records `GRACE_EXPIRED_WHILE_AWAY`, sets `BlockingSharedState.graceExpiredForPackage`
 - Uses `serviceScope` on `Dispatchers.Main.immediate`
 
 ### Service ↔ Activity Data Flow
@@ -264,14 +262,16 @@ ChillpillAccessibilityService
         ▼
 AppBlockActivity / AppBlockViewModel
    ├── Runs wait timer (from SettingsRepository.waitTimeSeconds)
-   ├── On "Continue": records WAIT_COMPLETED, sets grace in BlockingSharedState, finishes
+   ├── On "Continue": records WAIT_COMPLETED, sets grace in BlockingSharedState,
+   │   starts GracePeriodService, launches target app, finishes
    └── On "Go Home": records LEFT_APP, finishes
         │
         ▼ (if user continued)
 GracePeriodService
    ├── Reads grace duration from SettingsRepository
    ├── Shows notification countdown
-   └── On expiry: either re-blocks or marks graceExpiredForPackage
+   └── On expiry: queries UsageStatsManager for actual foreground app;
+       either re-blocks (user still in app) or marks graceExpiredForPackage (user left)
 ```
 
 ---
