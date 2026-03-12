@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Chillpill</string>
+    <string name="app_name">ChillPill</string>
     <string name="block_message_opens_count">Opened this app %d times in the last 24 hours</string>
     <string name="block_message_grace_expired">Your grace period is up</string>
     <string name="block_continue_to_app">Continue to app</string>
