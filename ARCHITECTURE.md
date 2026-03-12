@@ -7,7 +7,7 @@
 
 ## 1. What the App Does
 
-Chillpill is a screen-time reduction tool. When the user opens a monitored app, an
+Chillpill is a screen-time reduction tool. When the user opens a restricted app, an
 **AccessibilityService** intercepts the launch and presents a **block screen** with a
 configurable wait timer. After the timer completes, the user may either go home or
 continue into the app with a time-limited **grace period**. When the grace period expires
@@ -17,10 +17,10 @@ Key concepts:
 
 | Term | Meaning |
 |------|---------|
-| **Monitored app** | An app the user chose to restrict |
+| **Restricted app** | An app the user chose to restrict |
 | **Wait time** | Seconds the user must wait on the block screen (default 30, range 1–7200) |
 | **Grace period** | Minutes the user can use the app after waiting (default 5, range 1–1440) |
-| **Re-intervention** | A second block shown when the grace period expires while the user is still in the monitored app |
+| **Re-intervention** | A second block shown when the grace period expires while the user is still in the restricted app |
 
 ---
 
@@ -68,8 +68,8 @@ com.chillpill/
 ├── data/
 │   ├── blockstate/
 │   │   └── BlockSharedState.kt        SharedPreferences wrapper (currently unused)
-│   ├── monitored/
-│   │   └── MonitoredAppsRepository.kt DataStore for monitored package-name set
+│   ├── restricted/
+│   │   └── RestrictedAppsRepository.kt DataStore for restricted package-name set
 │   ├── settings/
 │   │   ├── Settings.kt                Data class (waitTimeSeconds, gracePeriodMinutes)
 │   │   └── SettingsRepository.kt      DataStore for settings + setupCompleted flag
@@ -81,7 +81,7 @@ com.chillpill/
 │
 ├── service/
 │   ├── BlockingSharedState.kt         In-memory singleton shared between services
-│   ├── ChillpillAccessibilityService.kt  Detects monitored-app launches, starts block/grace
+│   ├── ChillpillAccessibilityService.kt  Detects restricted-app launches, starts block/grace
 │   └── GracePeriodService.kt          Foreground service that counts down the grace timer
 │
 └── ui/
@@ -91,7 +91,7 @@ com.chillpill/
     ├── common/
     │   └── AppIcon.kt                 Reusable composable: displays an app's icon
     ├── home/
-    │   ├── HomeScreen.kt              Dashboard: greeting, today's stats, monitored apps, nav cards
+    │   ├── HomeScreen.kt              Dashboard: greeting, today's stats, restricted apps, nav cards
     │   └── HomeViewModel.kt           Permissions check, today's attempt/entered stats
     ├── navigation/
     │   └── NavGraph.kt                Route constants, ChillpillNavHost, slide transitions
@@ -100,7 +100,7 @@ com.chillpill/
     │   └── SetupViewModel.kt          Step state, permission tracking, advance logic
     ├── settings/
     │   ├── AppSelectionScreen.kt      Searchable list of installed apps with checkboxes
-    │   ├── SettingsScreen.kt          Wait time, grace period inputs, monitored apps list
+    │   ├── SettingsScreen.kt          Wait time, grace period inputs, restricted apps list
     │   └── SettingsViewModel.kt       Settings persistence, installed-app loading, search
     ├── statistics/
     │   ├── StatisticsScreen.kt        Time-range selector, per-app bar charts
@@ -130,7 +130,7 @@ no repository interfaces.
                          │ calls
 ┌────────────────────────▼─────────────────────────────────┐
 │  Repositories (concrete classes)                         │
-│  SettingsRepository · MonitoredAppsRepository            │
+│  SettingsRepository · RestrictedAppsRepository            │
 │  UsageEventsRepository                                   │
 └────────────────────────┬─────────────────────────────────┘
                          │ reads/writes
@@ -149,7 +149,7 @@ Manual DI via `ChillpillApp`:
 class ChillpillApp : Application() {
     val blockSharedState    by lazy { BlockSharedState(this) }
     val settingsRepository  by lazy { SettingsRepository(this) }
-    val monitoredAppsRepository by lazy { MonitoredAppsRepository(this) }
+    val restrictedAppsRepository by lazy { RestrictedAppsRepository(this) }
     val usageEventsRepository   by lazy { UsageEventsRepository(Room.databaseBuilder(...).build()) }
 }
 ```
@@ -168,12 +168,12 @@ repository properties. No Hilt, Dagger, or Koin.
 - **Exposed flows:** `settings: Flow<Settings>`, `setupCompleted: Flow<Boolean>`
 - **Write methods:** `setWaitTimeSeconds`, `setGracePeriodMinutes`, `setSettings`, `setSetupCompleted`
 
-### 5.2 MonitoredAppsRepository (DataStore)
+### 5.2 RestrictedAppsRepository (DataStore)
 
-- **Store name:** `"monitored_apps"`
+- **Store name:** `"restricted_apps"`
 - **Key:** `package_names` (String Set)
-- **Exposed flow:** `monitoredPackages: Flow<Set<String>>`
-- **Write method:** `setMonitored(packageNames: Set<String>)`
+- **Exposed flow:** `restrictedPackages: Flow<Set<String>>`
+- **Write method:** `setRestricted(packageNames: Set<String>)`
 
 ### 5.3 UsageEventsRepository (Room)
 
@@ -189,11 +189,11 @@ repository properties. No Hilt, Dagger, or Koin.
 **Event types** (`UsageEventType` constants):
 | Constant | When recorded |
 |----------|---------------|
-| `OPEN_ATTEMPT` | Accessibility service intercepts a monitored-app launch |
+| `OPEN_ATTEMPT` | Accessibility service intercepts a restricted-app launch |
 | `WAIT_COMPLETED` | User finishes the wait timer and taps "Continue" |
 | `CONTINUED` | (reserved, not actively used) |
 | `LEFT_APP` | User taps "Back to Home" on the block screen |
-| `GRACE_EXPIRED_WHILE_ACTIVE` | Grace timer ends while user is still in the monitored app |
+| `GRACE_EXPIRED_WHILE_ACTIVE` | Grace timer ends while user is still in the restricted app |
 | `GRACE_EXPIRED_WHILE_AWAY` | Grace timer ends while user has navigated away |
 
 **Key DAO queries** (`UsageEventsDao`):
@@ -233,18 +233,18 @@ Key methods: `isInGracePeriod(pkg)`, `setGraceValidUntil(pkg, millis)`,
 - Listens for `TYPE_WINDOW_STATE_CHANGED` events
 - Maintains a single-threaded coroutine scope (`Dispatchers.Default.limitedParallelism(1)`)
 - Decision flow on detecting a foreground change:
-  1. Ignore non-monitored packages, launcher, system UI, own activities
+  1. Ignore non-restricted packages, launcher, system UI, own activities
   2. If `graceExpiredForPackage` matches → **re-intervention** (show block screen again)
   3. If package is in grace period → allow
   4. Otherwise → record `OPEN_ATTEMPT`, start `AppBlockActivity`
 - Starts `GracePeriodService` when a grace period needs to begin
-- Stops `GracePeriodService` when the user leaves the monitored app
+- Stops `GracePeriodService` when the user leaves the restricted app
 
 ### 6.3 GracePeriodService (Foreground Service)
 
 - Shows an ongoing notification with a countdown
 - On expiry:
-  - If user is still in the monitored app → records `GRACE_EXPIRED_WHILE_ACTIVE`,
+  - If user is still in the restricted app → records `GRACE_EXPIRED_WHILE_ACTIVE`,
     starts `AppBlockActivity` as re-intervention
   - If user navigated away → records `GRACE_EXPIRED_WHILE_AWAY`,
     sets `BlockingSharedState.graceExpiredForPackage`
@@ -253,7 +253,7 @@ Key methods: `isInGracePeriod(pkg)`, `setGraceValidUntil(pkg, millis)`,
 ### Service ↔ Activity Data Flow
 
 ```
-User opens monitored app
+User opens restricted app
         │
         ▼
 ChillpillAccessibilityService
@@ -285,8 +285,8 @@ All in-app navigation happens via a single `NavHost` in `MainActivity`:
 | Route constant | Screen | Purpose |
 |----------------|--------|---------|
 | `Routes.SETUP` | `SetupScreen` | 4-step onboarding (welcome → permissions → app selection → done) |
-| `Routes.HOME` | `HomeScreen` | Dashboard with today's stats, monitored apps, nav cards |
-| `Routes.SETTINGS` | `SettingsScreen` | Edit wait time, grace period, monitored apps list |
+| `Routes.HOME` | `HomeScreen` | Dashboard with today's stats, restricted apps, nav cards |
+| `Routes.SETTINGS` | `SettingsScreen` | Edit wait time, grace period, restricted apps list |
 | `Routes.APP_SELECTION` | `AppSelectionScreen` | Searchable installed-app list with checkboxes |
 | `Routes.STATISTICS` | `StatisticsScreen` | Bar charts by time range (week/month/3mo/year) |
 
@@ -304,9 +304,9 @@ accessibility service via Intent with `EXTRA_PACKAGE_NAME` and `EXTRA_IS_RE_INTE
 
 | ViewModel | Key State Fields | Responsibilities |
 |-----------|-----------------|------------------|
-| `HomeViewModel` | `permissionsOk`, `showUsageAccessBanner`, `monitoredPackages`, `todayAttempts`, `todayEntered` | Check a11y/usage-access permissions, load today's aggregate stats |
-| `SetupViewModel` | `currentStep` (0–3), `accessibilityGranted`, `usageAccessGranted`, `monitoredPackages`, `canAdvance` | Drive 4-step onboarding, validate each step before advancing |
-| `SettingsViewModel` | `waitTimeSecondsInput`, `gracePeriodMinutesInput`, `monitoredAppsInfo`, `installedApps`, `appSearchQuery` | Persist settings, load/sort installed apps (by usage stats), filter search |
+| `HomeViewModel` | `permissionsOk`, `showUsageAccessBanner`, `restrictedPackages`, `todayAttempts`, `todayEntered` | Check a11y/usage-access permissions, load today's aggregate stats |
+| `SetupViewModel` | `currentStep` (0–3), `accessibilityGranted`, `usageAccessGranted`, `restrictedPackages`, `canAdvance` | Drive 4-step onboarding, validate each step before advancing |
+| `SettingsViewModel` | `waitTimeSecondsInput`, `gracePeriodMinutesInput`, `restrictedAppsInfo`, `installedApps`, `appSearchQuery` | Persist settings, load/sort installed apps (by usage stats), filter search |
 | `StatisticsViewModel` | `selectedRange`, `stats: List<AppStatistic>`, `isLoading`, `focusedSeries` | Aggregate daily stats into buckets, auto-refresh every 15 s, legend focus |
 | `AppBlockViewModel` | `phase` (WAITING/COMPLETED), `progress` (0→1), `openCount24h` | Run wait countdown, emit one-shot events (`RequestFinish`, `RequestGoHome`) via Channel |
 
@@ -372,7 +372,7 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
 4. **StateFlow for UI state** — mutable state is private; immutable `StateFlow` is exposed.
 5. **Channel for one-shot events** — `AppBlockViewModel` uses `Channel<AppBlockEvent>` for
    navigation actions (`RequestFinish`, `RequestGoHome`).
-6. **DataStore for simple prefs, Room for structured data** — settings and monitored-app
+6. **DataStore for simple prefs, Room for structured data** — settings and restricted-app
    sets use DataStore; usage events use Room.
 7. **In-memory object for cross-service state** — `BlockingSharedState` is a Kotlin
    `object` (singleton) shared between the accessibility service and grace-period service.

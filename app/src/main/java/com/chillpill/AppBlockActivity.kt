@@ -100,7 +100,7 @@ class AppBlockActivity : ComponentActivity() {
     }
 
     /**
-     * Brings the monitored app back to the foreground (equivalent to switching back from recents).
+     * Brings the restricted app back to the foreground (equivalent to switching back from recents).
      * Uses FLAG_ACTIVITY_NEW_TASK only so the existing task is brought to front without clearing it.
      */
     private fun launchTargetAppAndFinish() {

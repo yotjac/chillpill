@@ -136,7 +136,7 @@ class StatisticsViewModel(
         viewModelScope.launch {
             if (showLoading) _isLoading.value = true
             withContext(Dispatchers.IO) {
-                val packages = app.monitoredAppsRepository.monitoredPackages.first()
+                val packages = app.restrictedAppsRepository.restrictedPackages.first()
                 val range = _selectedRange.value
                 val pm = app.packageManager
                 val list = if (range == TimeRange.WEEK) {

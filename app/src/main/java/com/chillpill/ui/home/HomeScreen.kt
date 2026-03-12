@@ -77,7 +77,7 @@ fun HomeScreen(
     )
     val permissionsOk by viewModel.permissionsOk.collectAsStateWithLifecycle()
     val showUsageAccessBanner by viewModel.showUsageAccessBanner.collectAsStateWithLifecycle()
-    val monitoredPackages by viewModel.monitoredPackages.collectAsStateWithLifecycle()
+    val restrictedPackages by viewModel.restrictedPackages.collectAsStateWithLifecycle()
     val todayAttempts by viewModel.todayAttempts.collectAsStateWithLifecycle()
     val todayEntered by viewModel.todayEntered.collectAsStateWithLifecycle()
 
@@ -113,9 +113,9 @@ fun HomeScreen(
                     attempts = todayAttempts,
                     entered = todayEntered
                 )
-                if (monitoredPackages.isNotEmpty()) {
+                if (restrictedPackages.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(32.dp))
-                    MonitoredAppsRow(monitoredPackages = monitoredPackages)
+                    RestrictedAppsRow(restrictedPackages = restrictedPackages)
                 }
                 Spacer(modifier = Modifier.height(32.dp))
                 NavigationCards(
@@ -267,8 +267,8 @@ private fun HeroStatsCard(
 }
 
 @Composable
-private fun MonitoredAppsRow(
-    monitoredPackages: Set<String>,
+private fun RestrictedAppsRow(
+    restrictedPackages: Set<String>,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -287,7 +287,7 @@ private fun MonitoredAppsRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val packagesList = monitoredPackages.sorted()
+            val packagesList = restrictedPackages.sorted()
             val maxVisible = 6
             val visible = packagesList.take(maxVisible)
             visible.forEach { packageName ->

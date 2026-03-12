@@ -41,13 +41,13 @@ import com.chillpill.ui.common.AppIcon
 fun SettingsScreen(
     app: ChillpillApp,
     onBack: () -> Unit,
-    onEditMonitoredApps: () -> Unit,
+    onEditRestrictedApps: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.Factory(app))
     val waitTimeSecondsInput by viewModel.waitTimeSecondsInput.collectAsStateWithLifecycle()
     val gracePeriodMinutesInput by viewModel.gracePeriodMinutesInput.collectAsStateWithLifecycle()
-    val monitoredAppsInfo by viewModel.monitoredAppsInfo.collectAsStateWithLifecycle()
+    val restrictedAppsInfo by viewModel.restrictedAppsInfo.collectAsStateWithLifecycle()
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
@@ -102,7 +102,7 @@ fun SettingsScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
 
-            // Monitored apps section
+            // Restricted apps section
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -110,18 +110,18 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Monitored apps",
+                    text = "Restricted apps",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f)
                 )
-                IconButton(onClick = onEditMonitoredApps) {
-                    Icon(Icons.Filled.Edit, contentDescription = "Edit monitored apps")
+                IconButton(onClick = onEditRestrictedApps) {
+                    Icon(Icons.Filled.Edit, contentDescription = "Edit restricted apps")
                 }
             }
-            if (monitoredAppsInfo.isEmpty()) {
+            if (restrictedAppsInfo.isEmpty()) {
                 Text(
-                    text = "No apps monitored",
+                    text = "No apps restricted",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 16.dp)
@@ -133,7 +133,7 @@ fun SettingsScreen(
                         .fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(monitoredAppsInfo, key = { it.packageName }) { appInfo ->
+                    items(restrictedAppsInfo, key = { it.packageName }) { appInfo ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -148,10 +148,10 @@ fun SettingsScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             IconButton(
-                                onClick = { viewModel.removeMonitoredApp(appInfo.packageName) },
+                                onClick = { viewModel.removeRestrictedApp(appInfo.packageName) },
                                 modifier = Modifier.size(40.dp)
                             ) {
-                                Icon(Icons.Filled.Delete, contentDescription = "Remove from monitored")
+                                Icon(Icons.Filled.Delete, contentDescription = "Remove from restricted")
                             }
                         }
                     }

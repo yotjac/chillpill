@@ -41,11 +41,11 @@ class SettingsViewModel(
     private val _installedApps = MutableStateFlow<List<AppInfo>>(emptyList())
     val installedApps: StateFlow<List<AppInfo>> = _installedApps.asStateFlow()
 
-    private val _monitoredPackages = MutableStateFlow<Set<String>>(emptySet())
-    val monitoredPackages: StateFlow<Set<String>> = _monitoredPackages.asStateFlow()
+    private val _restrictedPackages = MutableStateFlow<Set<String>>(emptySet())
+    val restrictedPackages: StateFlow<Set<String>> = _restrictedPackages.asStateFlow()
 
-    private val _monitoredAppsInfo = MutableStateFlow<List<AppInfo>>(emptyList())
-    val monitoredAppsInfo: StateFlow<List<AppInfo>> = _monitoredAppsInfo.asStateFlow()
+    private val _restrictedAppsInfo = MutableStateFlow<List<AppInfo>>(emptyList())
+    val restrictedAppsInfo: StateFlow<List<AppInfo>> = _restrictedAppsInfo.asStateFlow()
 
     private val _appSearchQuery = MutableStateFlow("")
     val appSearchQuery: StateFlow<String> = _appSearchQuery.asStateFlow()
@@ -59,16 +59,16 @@ class SettingsViewModel(
             loadInstalledApps()
         }
         viewModelScope.launch {
-            app.monitoredAppsRepository.monitoredPackages.collect { set ->
-                _monitoredPackages.value = set
-                loadMonitoredAppsInfo()
+            app.restrictedAppsRepository.restrictedPackages.collect { set ->
+                _restrictedPackages.value = set
+                loadRestrictedAppsInfo()
             }
         }
     }
 
-    private fun loadMonitoredAppsInfo() {
+    private fun loadRestrictedAppsInfo() {
         viewModelScope.launch {
-            val packages = _monitoredPackages.value
+            val packages = _restrictedPackages.value
             val list = withContext(Dispatchers.IO) {
                 val pm = app.packageManager
                 packages.mapNotNull { packageName ->
@@ -81,7 +81,7 @@ class SettingsViewModel(
                     }
                 }.sortedBy { it.label.lowercase() }
             }
-            _monitoredAppsInfo.value = list
+            _restrictedAppsInfo.value = list
         }
     }
 
@@ -90,7 +90,7 @@ class SettingsViewModel(
             val apps = withContext(Dispatchers.IO) {
                 val pm = app.packageManager
                 val chillpillPackage = app.packageName
-                val monitoredSet = app.monitoredAppsRepository.monitoredPackages.first()
+                val restrictedSet = app.restrictedAppsRepository.restrictedPackages.first()
 
                 val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
                 @Suppress("DEPRECATION")
@@ -102,7 +102,7 @@ class SettingsViewModel(
                     .filter { it != chillpillPackage }
                     .toSet()
 
-                val packageNames = (launcherPackages + monitoredSet).distinct()
+                val packageNames = (launcherPackages + restrictedSet).distinct()
 
                 val appList = packageNames.mapNotNull { packageName ->
                     try {
@@ -167,24 +167,24 @@ class SettingsViewModel(
         }
     }
 
-    fun onMonitoredChanged(packageName: String, selected: Boolean) {
-        _monitoredPackages.value = if (selected) {
-            _monitoredPackages.value + packageName
+    fun onRestrictedChanged(packageName: String, selected: Boolean) {
+        _restrictedPackages.value = if (selected) {
+            _restrictedPackages.value + packageName
         } else {
-            _monitoredPackages.value - packageName
+            _restrictedPackages.value - packageName
         }
         viewModelScope.launch {
-            app.monitoredAppsRepository.setMonitored(_monitoredPackages.value)
+            app.restrictedAppsRepository.setRestricted(_restrictedPackages.value)
         }
-        loadMonitoredAppsInfo()
+        loadRestrictedAppsInfo()
     }
 
-    fun removeMonitoredApp(packageName: String) {
-        _monitoredPackages.value = _monitoredPackages.value - packageName
+    fun removeRestrictedApp(packageName: String) {
+        _restrictedPackages.value = _restrictedPackages.value - packageName
         viewModelScope.launch {
-            app.monitoredAppsRepository.setMonitored(_monitoredPackages.value)
+            app.restrictedAppsRepository.setRestricted(_restrictedPackages.value)
         }
-        loadMonitoredAppsInfo()
+        loadRestrictedAppsInfo()
     }
 
     fun onSearchQueryChanged(query: String) {

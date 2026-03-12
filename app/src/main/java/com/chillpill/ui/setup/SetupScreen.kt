@@ -60,7 +60,7 @@ fun SetupScreen(
     val canAdvance by viewModel.canAdvance.collectAsStateWithLifecycle()
     val accessibilityGranted by viewModel.accessibilityGranted.collectAsStateWithLifecycle()
     val usageAccessGranted by viewModel.usageAccessGranted.collectAsStateWithLifecycle()
-    val monitoredPackages by viewModel.monitoredPackages.collectAsStateWithLifecycle()
+    val restrictedPackages by viewModel.restrictedPackages.collectAsStateWithLifecycle()
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         viewModel.refreshPermissions()
@@ -88,10 +88,10 @@ fun SetupScreen(
                         onFixPermissions = onFixPermissions,
                         onFixUsageAccess = onFixUsageAccess
                     )
-                    2 -> MonitoredAppsStep(
-                        monitoredPackages = monitoredPackages,
+                    2 -> RestrictedAppsStep(
+                        restrictedPackages = restrictedPackages,
                         onOpenAppSelection = onOpenAppSelection,
-                        onRemoveApp = { viewModel.removeMonitoredApp(it) }
+                        onRemoveApp = { viewModel.removeRestrictedApp(it) }
                     )
                     3 -> DoneStep()
                 }
@@ -230,8 +230,8 @@ private fun PermissionCard(
 }
 
 @Composable
-private fun MonitoredAppsStep(
-    monitoredPackages: Set<String>,
+private fun RestrictedAppsStep(
+    restrictedPackages: Set<String>,
     onOpenAppSelection: () -> Unit,
     onRemoveApp: (String) -> Unit
 ) {
@@ -267,7 +267,7 @@ private fun MonitoredAppsStep(
             }
         }
         Spacer(modifier = Modifier.height(32.dp))
-        if (monitoredPackages.isEmpty()) {
+        if (restrictedPackages.isEmpty()) {
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -287,7 +287,7 @@ private fun MonitoredAppsStep(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                items(monitoredPackages.sorted()) { packageName ->
+                items(restrictedPackages.sorted()) { packageName ->
                     Box(
                         modifier = Modifier.size(72.dp),
                         contentAlignment = Alignment.TopEnd
@@ -307,7 +307,7 @@ private fun MonitoredAppsStep(
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Close,
-                                contentDescription = "Remove from monitored",
+                                contentDescription = "Remove from restricted",
                                 modifier = Modifier.size(18.dp)
                             )
                         }

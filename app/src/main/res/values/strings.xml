@@ -7,5 +7,5 @@
     <string name="block_back_to_home">Back to Home</string>
     <string name="block_attempts_last_24h">attempts to open %1$s in the last 24 hours</string>
     <string name="grace_notification_title">Chillpill – grace period</string>
-    <string name="accessibility_service_description">Chillpill uses this to detect when you open monitored apps and show a short wait screen.</string>
+    <string name="accessibility_service_description">Chillpill uses this to detect when you open restricted apps and show a short wait screen.</string>
 </resources>

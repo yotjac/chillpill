@@ -61,7 +61,7 @@
             android:exported="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Grace period timer for monitored app usage" />
+                android:value="Grace period timer for restricted app usage" />
         </service>
     </application>
 </manifest>

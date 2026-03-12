@@ -22,7 +22,7 @@ class HomeViewModel(
     private val app: ChillpillApp
 ) : ViewModel() {
 
-    private val monitoredAppsRepository = app.monitoredAppsRepository
+    private val restrictedAppsRepository = app.restrictedAppsRepository
     private val usageEventsRepository = app.usageEventsRepository
 
     private val _permissionsOk = MutableStateFlow(false)
@@ -34,8 +34,8 @@ class HomeViewModel(
     private val _showUsageAccessBanner = MutableStateFlow(false)
     val showUsageAccessBanner: StateFlow<Boolean> = _showUsageAccessBanner.asStateFlow()
 
-    private val _monitoredPackages = MutableStateFlow<Set<String>>(emptySet())
-    val monitoredPackages: StateFlow<Set<String>> = _monitoredPackages.asStateFlow()
+    private val _restrictedPackages = MutableStateFlow<Set<String>>(emptySet())
+    val restrictedPackages: StateFlow<Set<String>> = _restrictedPackages.asStateFlow()
 
     private val _todayAttempts = MutableStateFlow(0)
     val todayAttempts: StateFlow<Int> = _todayAttempts.asStateFlow()
@@ -49,12 +49,12 @@ class HomeViewModel(
 
     init {
         refreshPermissions()
-        observeMonitoredAppsAndStats()
+        observeRestrictedAppsAndStats()
     }
 
     fun refreshStats() {
         viewModelScope.launch(Dispatchers.IO) {
-            updateTodayStats(_monitoredPackages.value)
+            updateTodayStats(_restrictedPackages.value)
         }
     }
 
@@ -84,10 +84,10 @@ class HomeViewModel(
         updateShowUsageAccessBanner()
     }
 
-    private fun observeMonitoredAppsAndStats() {
+    private fun observeRestrictedAppsAndStats() {
         viewModelScope.launch(Dispatchers.IO) {
-            monitoredAppsRepository.monitoredPackages.collect { packages ->
-                _monitoredPackages.value = packages
+            restrictedAppsRepository.restrictedPackages.collect { packages ->
+                _restrictedPackages.value = packages
                 updateTodayStats(packages)
             }
         }

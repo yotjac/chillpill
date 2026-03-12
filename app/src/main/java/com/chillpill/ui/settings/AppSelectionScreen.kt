@@ -40,7 +40,7 @@ fun AppSelectionScreen(
 ) {
     val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.Factory(app))
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
-    val monitoredPackages by viewModel.monitoredPackages.collectAsStateWithLifecycle()
+    val restrictedPackages by viewModel.restrictedPackages.collectAsStateWithLifecycle()
     val appSearchQuery by viewModel.appSearchQuery.collectAsStateWithLifecycle()
 
     Scaffold(
@@ -88,8 +88,8 @@ fun AppSelectionScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Checkbox(
-                            checked = appInfo.packageName in monitoredPackages,
-                            onCheckedChange = { viewModel.onMonitoredChanged(appInfo.packageName, it) }
+                            checked = appInfo.packageName in restrictedPackages,
+                            onCheckedChange = { viewModel.onRestrictedChanged(appInfo.packageName, it) }
                         )
                         Spacer(modifier = Modifier.size(8.dp))
                         AppIcon(packageName = appInfo.packageName, modifier = Modifier.size(40.dp))

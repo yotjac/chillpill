@@ -32,14 +32,14 @@ class SetupViewModel(
     private val _usageAccessGranted = MutableStateFlow(false)
     val usageAccessGranted: StateFlow<Boolean> = _usageAccessGranted.asStateFlow()
 
-    val monitoredPackages: StateFlow<Set<String>> = app.monitoredAppsRepository.monitoredPackages
+    val restrictedPackages: StateFlow<Set<String>> = app.restrictedAppsRepository.restrictedPackages
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     val canAdvance: StateFlow<Boolean> = combine(
         _currentStep,
         _accessibilityGranted,
         _usageAccessGranted,
-        monitoredPackages
+        restrictedPackages
     ) { step, accessibility, usageAccess, packages ->
         when (step) {
             0 -> true
@@ -79,10 +79,10 @@ class SetupViewModel(
         if (step < 3) _currentStep.value = step + 1
     }
 
-    fun removeMonitoredApp(packageName: String) {
+    fun removeRestrictedApp(packageName: String) {
         viewModelScope.launch {
-            val current = app.monitoredAppsRepository.monitoredPackages.first()
-            app.monitoredAppsRepository.setMonitored(current - packageName)
+            val current = app.restrictedAppsRepository.restrictedPackages.first()
+            app.restrictedAppsRepository.setRestricted(current - packageName)
         }
     }
 

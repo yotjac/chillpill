@@ -126,7 +126,7 @@ fun StatisticsScreen(
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = "No monitored apps or no activity in this period",
+                        text = "No restricted apps or no activity in this period",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

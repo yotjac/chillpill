@@ -35,7 +35,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
         val info = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            packageNames = null // receive events for all packages; we filter by monitored set
+            packageNames = null // receive events for all packages; we filter by restricted set
         }
         serviceInfo = info
     }
@@ -58,22 +58,22 @@ class ChillpillAccessibilityService : AccessibilityService() {
 
     private suspend fun processEvent(pkg: String) {
         try {
-            val monitoredPackages = withContext(Dispatchers.IO) {
-                app.monitoredAppsRepository.monitoredPackages.first()
+            val restrictedPackages = withContext(Dispatchers.IO) {
+                app.restrictedAppsRepository.restrictedPackages.first()
             }
             val settings = withContext(Dispatchers.IO) {
                 app.settingsRepository.settings.first()
             }
             val graceMs = settings.gracePeriodMinutes * 60L * 1000L
 
-            Log.d(TAG, "processEvent: pkg=$pkg monitoredCount=${monitoredPackages.size} monitored=$monitoredPackages")
+            Log.d(TAG, "processEvent: pkg=$pkg restrictedCount=${restrictedPackages.size} restricted=$restrictedPackages")
 
-            recordLeavingMonitoredApp(monitoredPackages, pkg, graceMs)
+            recordLeavingRestrictedApp(restrictedPackages, pkg, graceMs)
             // GracePeriodService reads this when the timer expires to decide re-intervene vs set grace-expired flag
             BlockingSharedState.setCurrentForegroundPackage(pkg)
 
-            if (pkg !in monitoredPackages) {
-                Log.d(TAG, "processEvent: pkg not monitored, allowing")
+            if (pkg !in restrictedPackages) {
+                Log.d(TAG, "processEvent: pkg not restricted, allowing")
                 setPreviousForeground(pkg)
                 return
             }
@@ -94,7 +94,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
                 return
             }
             Log.d(TAG, "processEvent: showing block for pkg=$pkg (entering from elsewhere, grace expired)")
-            handleEnteringMonitoredAppFromElsewhere(pkg)
+            handleEnteringRestrictedAppFromElsewhere(pkg)
 
             setPreviousForeground(pkg)
         } catch (e: Exception) {
@@ -102,11 +102,11 @@ class ChillpillAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun recordLeavingMonitoredApp(monitoredPackages: Set<String>, newPackage: String, graceMs: Long) {
+    private fun recordLeavingRestrictedApp(restrictedPackages: Set<String>, newPackage: String, graceMs: Long) {
         // Do not grant grace when switching to our block activity: user did not leave the app voluntarily
         if (newPackage == applicationContext.packageName) return
         previousForegroundPackage?.let { prev ->
-            if (prev in monitoredPackages && prev != newPackage) {
+            if (prev in restrictedPackages && prev != newPackage) {
                 BlockingSharedState.setGraceValidUntil(prev, System.currentTimeMillis() + graceMs)
             }
         }
@@ -131,7 +131,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
         return true
     }
 
-    private suspend fun handleEnteringMonitoredAppFromElsewhere(pkg: String) {
+    private suspend fun handleEnteringRestrictedAppFromElsewhere(pkg: String) {
         withContext(Dispatchers.IO) {
             app.usageEventsRepository.recordEvent(pkg, UsageEventType.OPEN_ATTEMPT)
         }

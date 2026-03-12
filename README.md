@@ -6,9 +6,9 @@ Limit screen time by enforcing a wait period and grace period before using selec
 
 Chillpill helps you reduce usage of chosen apps by:
 
-- Requiring a short wait before opening a monitored app
+- Requiring a short wait before opening a restricted app
 - Allowing a time-limited "grace period" per session after the wait
-- Showing a block screen when you try to open a monitored app (or when the grace period has expired)
+- Showing a block screen when you try to open a restricted app (or when the grace period has expired)
 
 See the [design document](specs/chillpill-design.md) for architecture, data model, and flows.
 
