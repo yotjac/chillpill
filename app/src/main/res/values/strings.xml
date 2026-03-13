@@ -13,4 +13,7 @@
     <string name="suggest_ignore">Ignore</string>
     <string name="suggest_add">Restrict App</string>
     <string name="suggest_never">Never ask me again about %1$s</string>
+    <string name="re_intervention_still_using">still using</string>
+    <string name="re_intervention_chance_to_stop">this is your chance to stop</string>
+    <string name="re_intervention_keep_using">keep using the app</string>
 </resources>

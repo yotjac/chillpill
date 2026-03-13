@@ -11,6 +11,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.chillpill.AppBlockActivity
 import com.chillpill.ChillpillApp
+import com.chillpill.ReInterventionActivity
 import com.chillpill.SuggestRestrictionActivity
 import com.chillpill.data.suggestion.ExcludedApps
 import com.chillpill.data.usage.UsageEventType
@@ -228,11 +229,12 @@ class ChillpillAccessibilityService : AccessibilityService() {
 
     private fun startBlockActivity(packageName: String, isReIntervention: Boolean) {
         try {
-            val intent = Intent(applicationContext, AppBlockActivity::class.java).apply {
+            val activityClass = if (isReIntervention) ReInterventionActivity::class.java else AppBlockActivity::class.java
+            val intent = Intent(applicationContext, activityClass).apply {
                 setPackage(applicationContext.packageName)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_HISTORY)
                 putExtra(AppBlockActivity.EXTRA_PACKAGE_NAME, packageName)
-                putExtra(AppBlockActivity.EXTRA_IS_RE_INTERVENTION, isReIntervention)
+                if (!isReIntervention) putExtra(AppBlockActivity.EXTRA_IS_RE_INTERVENTION, false)
             }
             Log.d(TAG, "startBlockActivity: launching packageName=$packageName isReIntervention=$isReIntervention")
             applicationContext.startActivity(intent)

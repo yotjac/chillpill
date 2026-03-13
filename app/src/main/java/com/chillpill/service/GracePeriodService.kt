@@ -13,8 +13,8 @@ import android.os.IBinder
 import android.util.Log
 import android.app.usage.UsageStatsManager
 import androidx.core.app.NotificationCompat
-import com.chillpill.AppBlockActivity
 import com.chillpill.ChillpillApp
+import com.chillpill.ReInterventionActivity
 import com.chillpill.R
 import com.chillpill.data.usage.UsageEventType
 import kotlinx.coroutines.CoroutineScope
@@ -142,10 +142,9 @@ class GracePeriodService : Service() {
 
     private fun startBlockActivity(packageName: String) {
         try {
-            val intent = Intent(applicationContext, AppBlockActivity::class.java).apply {
+            val intent = Intent(applicationContext, ReInterventionActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_HISTORY)
-                putExtra(AppBlockActivity.EXTRA_PACKAGE_NAME, packageName)
-                putExtra(AppBlockActivity.EXTRA_IS_RE_INTERVENTION, true)
+                putExtra(ReInterventionActivity.EXTRA_PACKAGE_NAME, packageName)
             }
             applicationContext.startActivity(intent)
         } catch (e: Exception) {

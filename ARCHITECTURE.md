@@ -71,6 +71,7 @@ com.chillpill/
 ├── MainActivity.kt                    Launcher, hosts Compose NavHost
 ├── ChillpillSettingsActivity.kt       Trampoline: opens MainActivity at the Settings route
 ├── AppBlockActivity.kt                Hosts block-screen Compose UI (separate from NavHost)
+├── ReInterventionActivity.kt          Hosts re-intervention screen (separate Activity, distinct UI)
 ├── SuggestRestrictionActivity.kt      Hosts suggestion-popup Compose dialog (separate task)
 │
 ├── data/
@@ -100,6 +101,8 @@ com.chillpill/
     ├── appblock/
     │   ├── AppBlockScreen.kt          Block screen composable (wait animation, continue/go-home)
     │   └── AppBlockViewModel.kt       Wait timer logic, event recording
+    ├── reintervention/
+    │   └── ReInterventionScreen.kt    Re-intervention composable (animated fill, cyan app name, go-home + keep-using)
     ├── common/
     │   └── AppIcon.kt                 Reusable composable: displays an app's icon
     ├── home/
@@ -280,22 +283,22 @@ Key methods: `isInGracePeriod(pkg)`, `setGraceValidUntil(pkg, millis)`,
 - Maintains a single-threaded coroutine scope (`Dispatchers.Default.limitedParallelism(1)`)
 - Decision flow on detecting a foreground change:
   1. If package **is** restricted:
-     a. If `graceExpiredForPackage` matches → **re-intervention** (show block screen again)
+     a. If `graceExpiredForPackage` matches → **re-intervention** (start `ReInterventionActivity`)
      b. If package is in grace period → allow
      c. Otherwise → record `OPEN_ATTEMPT`, start `AppBlockActivity`
   2. If package is **not** restricted → `handleNonRestrictedApp`:
      a. Skip if in `ExcludedApps.EXCLUDED_PACKAGES`
      b. Skip if the package has no launcher activity (`getLaunchIntentForPackage == null`)
      c. If not already suggested this session, query **UsageStatsManager** for foreground time of this package in the last 12 h; if ≥20 min, not ignored, not permanently excluded → launch `SuggestRestrictionActivity`
-- **Self-package event filtering:** Events from the app's own package (e.g. when `AppBlockActivity` or `SuggestRestrictionActivity` is shown) are handled before dispatching to `processEvent`: only `BlockingSharedState.currentForegroundPackage` is updated; `previousForegroundPackage` is left unchanged. This prevents the block screen from "resetting" the same-app guard, so when the restricted app fires a second `TYPE_WINDOW_STATE_CHANGED` during launch (e.g. splash-to-main transition), the service correctly treats it as the same app and does not show the block screen again. When the user taps "Go Home" from the block screen, `recordLeavingRestrictedApp` skips granting grace if `currentForegroundPackage` is the app's own package (user did not voluntarily leave the restricted app).
+- **Self-package event filtering:** Events from the app's own package (e.g. when `AppBlockActivity`, `ReInterventionActivity`, or `SuggestRestrictionActivity` is shown) are handled before dispatching to `processEvent`: only `BlockingSharedState.currentForegroundPackage` is updated; `previousForegroundPackage` is left unchanged. This prevents the block screen from "resetting" the same-app guard, so when the restricted app fires a second `TYPE_WINDOW_STATE_CHANGED` during launch (e.g. splash-to-main transition), the service correctly treats it as the same app and does not show the block screen again. When the user taps "Go Home" from the block screen, `recordLeavingRestrictedApp` skips granting grace if `currentForegroundPackage` is the app's own package (user did not voluntarily leave the restricted app).
 - Starts `GracePeriodService` when the user taps "Continue" on the block screen, or when the user taps "Restrict App" in the suggestion popup (so they can continue into the app without seeing the block screen that first time).
 
 ### 6.3 GracePeriodService (Foreground Service)
 
-- Started by `AppBlockActivity` when the user taps "Continue" (initial block or re-intervention). This guarantees the grace timer runs after every block dismissal.
+- Started by `AppBlockActivity` or `ReInterventionActivity` when the user taps "Continue" (initial block or re-intervention). This guarantees the grace timer runs after every block dismissal.
 - Shows an ongoing notification with a countdown
 - On expiry, determines whether the user is still in the restricted app via **UsageStatsManager** (`queryEvents` over the last 10 minutes to capture the most recent `ACTIVITY_RESUMED` event), falling back to `BlockingSharedState.currentForegroundPackage` if usage-stats query fails:
-  - If user is still in the restricted app → records `GRACE_EXPIRED_WHILE_ACTIVE`, starts `AppBlockActivity` as re-intervention
+  - If user is still in the restricted app → records `GRACE_EXPIRED_WHILE_ACTIVE`, starts `ReInterventionActivity`
   - If user navigated away → records `GRACE_EXPIRED_WHILE_AWAY`, sets `BlockingSharedState.graceExpiredForPackage`
 - Uses `serviceScope` on `Dispatchers.Main.immediate`
 
@@ -309,11 +312,11 @@ User opens restricted app
         ▼
 ChillpillAccessibilityService
    ├── Records OPEN_ATTEMPT in UsageEventsRepository
-   ├── Starts AppBlockActivity (with package name + re-intervention flag)
+   ├── Starts AppBlockActivity (initial) or ReInterventionActivity (re-intervention), with package name
    └── Updates BlockingSharedState.currentForegroundPackage
         │
         ▼
-AppBlockActivity / AppBlockViewModel
+AppBlockActivity / AppBlockViewModel  (initial block)  OR  ReInterventionActivity / AppBlockViewModel  (re-intervention)
    ├── Runs wait timer (from SettingsRepository.waitTimeSeconds)
    ├── On "Continue": records WAIT_COMPLETED, sets grace in BlockingSharedState,
    │   starts GracePeriodService, launches target app, finishes
@@ -324,7 +327,7 @@ GracePeriodService
    ├── Reads grace duration from SettingsRepository
    ├── Shows notification countdown
    └── On expiry: queries UsageStatsManager for actual foreground app;
-       either re-blocks (user still in app) or marks graceExpiredForPackage (user left)
+       starts ReInterventionActivity (user still in app) or marks graceExpiredForPackage (user left)
 ```
 
 #### Suggestion flow (non-restricted apps)
@@ -371,7 +374,13 @@ All in-app navigation happens via a single `NavHost` in `MainActivity`:
 **Transitions:** Horizontal slide, 300 ms.
 
 `AppBlockActivity` is a **separate Activity** (not part of the NavHost) launched by the
-accessibility service via Intent with `EXTRA_PACKAGE_NAME` and `EXTRA_IS_RE_INTERVENTION`.
+accessibility service for the **initial** block via Intent with `EXTRA_PACKAGE_NAME` and `EXTRA_IS_RE_INTERVENTION`.
+
+`ReInterventionActivity` is another **separate Activity** used for **re-intervention** (when grace period
+expires while the user is still in the app, or when they return after grace expired). It has a distinct UI:
+animated fill background, large centered text with the app name in cyan ("still using &lt;app&gt;? this is your chance to stop"),
+"Go back home" button visible from the start, and "Keep using the app" button appearing when the wait ends. It reuses
+`AppBlockViewModel` for timer and event logic.
 
 `SuggestRestrictionActivity` is another **separate Activity** launched by the accessibility
 service when a non-restricted app is used frequently. It is themed as a translucent dialog
@@ -426,7 +435,8 @@ All ViewModels expose state via `StateFlow` and screens collect it with
 |-----------|------|----------|---------|
 | `MainActivity` | Activity | Yes (launcher) | Main Compose host |
 | `ChillpillSettingsActivity` | Activity | Yes | Accessibility settings trampoline |
-| `AppBlockActivity` | Activity | No | Block screen |
+| `AppBlockActivity` | Activity | No | Block screen (initial) |
+| `ReInterventionActivity` | Activity | No | Re-intervention screen (distinct UI, same wait/grace logic) |
 | `SuggestRestrictionActivity` | Activity | No | Suggestion popup dialog (`taskAffinity=""`, `excludeFromRecents`) |
 | `ChillpillAccessibilityService` | Service | No | App-launch detection via a11y |
 | `GracePeriodService` | Service | No | Grace-period foreground timer |
@@ -464,7 +474,8 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
 7. **In-memory object for cross-service state** — `BlockingSharedState` is a Kotlin
    `object` (singleton) shared between the accessibility service and grace-period service.
 8. **Separate Activity for block screen** — `AppBlockActivity` is launched outside the
-   NavHost by the accessibility service so it can overlay any app.
+   NavHost by the accessibility service for the initial block so it can overlay any app.
+   Re-intervention uses a dedicated `ReInterventionActivity` with distinct UI (animated fill, cyan app name, different button visibility).
 9. **Separate Activity for suggestion dialog** — `SuggestRestrictionActivity` runs in its
    own task so the intercepted app stays visible behind the translucent dialog.
 10. **In-memory tracker + DataStore persistence for suggestions** — `AppOpenTracker`
