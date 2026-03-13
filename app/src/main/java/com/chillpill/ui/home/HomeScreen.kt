@@ -201,11 +201,6 @@ private fun HomeGreeting(modifier: Modifier = Modifier) {
             color = MaterialTheme.colorScheme.primary
         )
         Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = "Here's your day so far",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
 
