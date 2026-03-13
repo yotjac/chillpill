@@ -42,6 +42,12 @@
             android:exported="false"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.Chillpill.Block" />
+        <activity
+            android:name=".SuggestRestrictionActivity"
+            android:exported="false"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.Chillpill.Dialog" />
 
         <service
             android:name=".service.ChillpillAccessibilityService"

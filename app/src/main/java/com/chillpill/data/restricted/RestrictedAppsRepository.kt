@@ -30,6 +30,13 @@ class RestrictedAppsRepository(private val context: Context) {
         context.restrictedAppsDataStore.edit { it[Keys.PACKAGE_NAMES] = packageNames }
     }
 
+    suspend fun addRestricted(packageName: String) {
+        context.restrictedAppsDataStore.edit { prefs ->
+            val current = prefs[Keys.PACKAGE_NAMES] ?: emptySet()
+            prefs[Keys.PACKAGE_NAMES] = current + packageName
+        }
+    }
+
     suspend fun setReInterventionDisabled(packageNames: Set<String>) {
         context.restrictedAppsDataStore.edit { it[Keys.RE_INTERVENTION_DISABLED] = packageNames }
     }

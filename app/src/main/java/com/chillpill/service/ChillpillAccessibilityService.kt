@@ -7,6 +7,8 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.chillpill.AppBlockActivity
 import com.chillpill.ChillpillApp
+import com.chillpill.SuggestRestrictionActivity
+import com.chillpill.data.suggestion.ExcludedApps
 import com.chillpill.data.usage.UsageEventType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -71,8 +73,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
             BlockingSharedState.setCurrentForegroundPackage(pkg)
 
             if (pkg !in restrictedPackages) {
-                Log.d(TAG, "processEvent: pkg not restricted, allowing")
-                setPreviousForeground(pkg)
+                handleNonRestrictedApp(pkg)
                 return
             }
 
@@ -136,6 +137,51 @@ class ChillpillAccessibilityService : AccessibilityService() {
         previousForegroundPackage = pkg
     }
 
+    private suspend fun handleNonRestrictedApp(pkg: String) {
+        Log.d(TAG, "processEvent: pkg not restricted, considering suggestion flow")
+
+        // Never suggest for hardcoded excluded packages.
+        if (pkg in ExcludedApps.EXCLUDED_PACKAGES) {
+            Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg is in hardcoded exclusion list, allowing without suggestion")
+            setPreviousForeground(pkg)
+            return
+        }
+
+        // Only suggest for apps that have a launcher activity (same filter as settings app selection).
+        val hasLauncherActivity = applicationContext.packageManager.getLaunchIntentForPackage(pkg) != null
+        if (!hasLauncherActivity) {
+            Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg has no launcher activity, skipping suggestion")
+            setPreviousForeground(pkg)
+            return
+        }
+
+        // Track opens in the in-memory tracker.
+        app.appOpenTracker.recordOpen(pkg)
+        val count = app.appOpenTracker.getRecentOpenCount(pkg)
+        Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg recentOpenCount=$count")
+
+        if (count <= 5 || app.appOpenTracker.wasSuggestionShown(pkg)) {
+            setPreviousForeground(pkg)
+            return
+        }
+
+        val isIgnored = withContext(Dispatchers.IO) {
+            app.suggestionRepository.isIgnored(pkg)
+        }
+        val isPermanentlyExcluded = withContext(Dispatchers.IO) {
+            app.suggestionRepository.isPermanentlyExcluded(pkg)
+        }
+        if (isIgnored || isPermanentlyExcluded) {
+            Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg is ignored=$isIgnored permanentlyExcluded=$isPermanentlyExcluded")
+            setPreviousForeground(pkg)
+            return
+        }
+
+        app.appOpenTracker.markSuggestionShown(pkg)
+        startSuggestRestrictionActivity(pkg)
+        setPreviousForeground(pkg)
+    }
+
     private fun startBlockActivity(packageName: String, isReIntervention: Boolean) {
         try {
             val intent = Intent(applicationContext, AppBlockActivity::class.java).apply {
@@ -149,6 +195,20 @@ class ChillpillAccessibilityService : AccessibilityService() {
             Log.d(TAG, "startBlockActivity: startActivity returned for packageName=$packageName (if block does not appear, check Android 10+ background start restrictions)")
         } catch (e: Exception) {
             Log.e(TAG, "startBlockActivity failed for packageName=$packageName", e)
+        }
+    }
+
+    private fun startSuggestRestrictionActivity(packageName: String) {
+        try {
+            val intent = Intent(applicationContext, SuggestRestrictionActivity::class.java).apply {
+                setPackage(applicationContext.packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_HISTORY)
+                putExtra(SuggestRestrictionActivity.EXTRA_PACKAGE_NAME, packageName)
+            }
+            Log.d(TAG, "startSuggestRestrictionActivity: launching suggestion for packageName=$packageName")
+            applicationContext.startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "startSuggestRestrictionActivity failed for packageName=$packageName", e)
         }
     }
 

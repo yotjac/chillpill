@@ -13,14 +13,21 @@ configurable wait timer. After the timer completes, the user may either go home 
 continue into the app with a time-limited **grace period**. When the grace period expires
 the block screen reappears.
 
+Additionally, when the user opens a **non-restricted** app frequently (more than 5 times
+in 5 hours), ChillPill proactively shows a **suggestion popup** asking whether to restrict
+that app. The user can accept, ignore (7-day cooldown), or permanently dismiss the
+suggestion for that app.
+
 Key concepts:
 
 | Term | Meaning |
 |------|---------|
 | **Restricted app** | An app the user chose to restrict |
-| **Wait time** | Seconds the user must wait on the block screen (default 30, range 1–7200) |
+| **Wait time** | Seconds the user must wait on the block screen (default 12, range 1–7200) |
 | **Grace period** | Minutes the user can use the app after waiting (default 5, range 1–1440) |
 | **Re-intervention** | A second block shown when the grace period expires while the user is still in the restricted app; can be toggled per restricted app |
+| **Suggestion popup** | A dialog shown when a non-restricted, non-excluded app is opened >5 times in 5 hours; offers to restrict it |
+| **Excluded app** | An app that never triggers a suggestion popup — either hardcoded (browsers, utilities, etc.) or user-chosen via "Never ask me again" |
 
 ---
 
@@ -64,6 +71,7 @@ com.chillpill/
 ├── MainActivity.kt                    Launcher, hosts Compose NavHost
 ├── ChillpillSettingsActivity.kt       Trampoline: opens MainActivity at the Settings route
 ├── AppBlockActivity.kt                Hosts block-screen Compose UI (separate from NavHost)
+├── SuggestRestrictionActivity.kt      Hosts suggestion-popup Compose dialog (separate task)
 │
 ├── data/
 │   ├── blockstate/
@@ -73,6 +81,10 @@ com.chillpill/
 │   ├── settings/
 │   │   ├── Settings.kt                Data class (waitTimeSeconds, gracePeriodMinutes)
 │   │   └── SettingsRepository.kt      DataStore for settings + setupCompleted flag
+│   ├── suggestion/
+│   │   ├── AppOpenTracker.kt          In-memory sliding-window counter (5h) per package
+│   │   ├── ExcludedApps.kt            Hardcoded Set<String> of never-suggest packages
+│   │   └── SuggestionRepository.kt    DataStore for ignored (7-day) + permanently excluded packages
 │   └── usage/
 │       ├── UsageEvent.kt              Room @Entity
 │       ├── UsageDatabase.kt           Room @Database (version 2)
@@ -81,7 +93,7 @@ com.chillpill/
 │
 ├── service/
 │   ├── BlockingSharedState.kt         In-memory singleton shared between services
-│   ├── ChillpillAccessibilityService.kt  Detects restricted-app launches, starts block/grace
+│   ├── ChillpillAccessibilityService.kt  Detects app launches; blocks restricted apps, suggests non-restricted
 │   └── GracePeriodService.kt          Foreground service that counts down the grace timer
 │
 └── ui/
@@ -105,6 +117,8 @@ com.chillpill/
     ├── statistics/
     │   ├── StatisticsScreen.kt        Time-range selector, per-app bar charts
     │   └── StatisticsViewModel.kt     Bucket aggregation, 15-second auto-refresh
+    ├── suggestion/
+    │   └── SuggestRestrictionScreen.kt  Dialog composable (Restrict / Ignore / Never ask again)
     └── theme/
         ├── Theme.kt                   ChillpillTheme (light/dark), color schemes, shapes
         └── Type.kt                    Typography (bodyLarge, titleLarge, labelLarge)
@@ -131,7 +145,7 @@ no repository interfaces.
 ┌────────────────────────▼─────────────────────────────────┐
 │  Repositories (concrete classes)                         │
 │  SettingsRepository · RestrictedAppsRepository            │
-│  UsageEventsRepository                                   │
+│  UsageEventsRepository · SuggestionRepository             │
 └────────────────────────┬─────────────────────────────────┘
                          │ reads/writes
 ┌────────────────────────▼─────────────────────────────────┐
@@ -150,6 +164,8 @@ class ChillpillApp : Application() {
     val blockSharedState    by lazy { BlockSharedState(this) }
     val settingsRepository  by lazy { SettingsRepository(this) }
     val restrictedAppsRepository by lazy { RestrictedAppsRepository(this) }
+    val appOpenTracker      by lazy { AppOpenTracker() }
+    val suggestionRepository by lazy { SuggestionRepository(this) }
     val usageEventsRepository   by lazy { UsageEventsRepository(Room.databaseBuilder(...).build()) }
 }
 ```
@@ -173,7 +189,7 @@ repository properties. No Hilt, Dagger, or Koin.
 - **Store name:** `"restricted_apps"`
 - **Keys:** `package_names` (String Set), `re_intervention_disabled` (String Set of package names that skip re-intervention)
 - **Exposed flows:** `restrictedPackages: Flow<Set<String>>`, `reInterventionDisabledPackages: Flow<Set<String>>`
-- **Write methods:** `setRestricted(packageNames: Set<String>)`, `setReInterventionDisabled(packageNames: Set<String>)`
+- **Write methods:** `setRestricted(packageNames: Set<String>)`, `addRestricted(packageName: String)`, `setReInterventionDisabled(packageNames: Set<String>)`
 
 ### 5.3 UsageEventsRepository (Room)
 
@@ -206,7 +222,37 @@ repository properties. No Hilt, Dagger, or Koin.
 - `AppStats(openAttempts: Int, continueCount: Int)` — aggregate per package
 - `DayStats(dayBucket: String, attempts: Int, entered: Int)` — daily aggregate
 
-### 5.4 BlockSharedState (SharedPreferences — unused)
+### 5.4 Suggestion Data Layer
+
+#### AppOpenTracker (in-memory)
+
+Thread-safe sliding-window counter that tracks per-package app-open timestamps within a
+5-hour window. Uses a `ConcurrentHashMap<String, MutableList<Long>>`.
+
+| Method | Purpose |
+|--------|---------|
+| `recordOpen(pkg)` | Appends current timestamp; prunes entries older than 5 h |
+| `getRecentOpenCount(pkg)` | Returns how many opens are within the window |
+| `markSuggestionShown(pkg)` / `wasSuggestionShown(pkg)` | Per-session flag to avoid repeat popups |
+| `clearSuggestionShown(pkg)` | Resets the flag (called when the user acts on the popup) |
+
+#### ExcludedApps (hardcoded set)
+
+`ExcludedApps.EXCLUDED_PACKAGES` is a `Set<String>` of package names for apps that should
+never trigger a suggestion popup. Includes browsers, AI assistants, phone/contacts/SMS,
+Spotify, WhatsApp, Google apps, the settings and clock apps, common device launchers, and
+an Israeli emergency alert app.
+
+#### SuggestionRepository (DataStore)
+
+- **Store name:** `"suggestion_prefs"`
+- **Keys:**
+  - `ignored_packages` — JSON string (`Gson`) encoding a `Map<String, Long>` of package name → ignore-expiry timestamp (7-day cooldown)
+  - `permanently_excluded_packages` — `StringSet` of packages the user chose "Never ask me again" for
+- **Read methods:** `isIgnored(pkg): Boolean`, `isPermanentlyExcluded(pkg): Boolean`
+- **Write methods:** `ignoreForOneWeek(pkg)`, `addPermanentlyExcluded(pkg)`
+
+### 5.5 BlockSharedState (SharedPreferences — unused)
 
 Instantiated in `ChillpillApp` but not referenced elsewhere. The active shared-state
 mechanism is the in-memory `BlockingSharedState` object in the service layer.
@@ -233,10 +279,14 @@ Key methods: `isInGracePeriod(pkg)`, `setGraceValidUntil(pkg, millis)`,
 - Listens for `TYPE_WINDOW_STATE_CHANGED` events
 - Maintains a single-threaded coroutine scope (`Dispatchers.Default.limitedParallelism(1)`)
 - Decision flow on detecting a foreground change:
-  1. Ignore non-restricted packages, launcher, system UI, own activities
-  2. If `graceExpiredForPackage` matches → **re-intervention** (show block screen again)
-  3. If package is in grace period → allow
-  4. Otherwise → record `OPEN_ATTEMPT`, start `AppBlockActivity`
+  1. If package **is** restricted:
+     a. If `graceExpiredForPackage` matches → **re-intervention** (show block screen again)
+     b. If package is in grace period → allow
+     c. Otherwise → record `OPEN_ATTEMPT`, start `AppBlockActivity`
+  2. If package is **not** restricted → `handleNonRestrictedApp`:
+     a. Skip if in `ExcludedApps.EXCLUDED_PACKAGES`
+     b. Skip if the package has no launcher activity (`getLaunchIntentForPackage == null`)
+     c. Record open in `AppOpenTracker`; if count > 5, not already suggested this session, not ignored, not permanently excluded → launch `SuggestRestrictionActivity`
 - Does **not** start `GracePeriodService`; the block activity starts it when the user taps "Continue", so re-interventions always get a new grace timer.
 
 ### 6.3 GracePeriodService (Foreground Service)
@@ -249,6 +299,8 @@ Key methods: `isInGracePeriod(pkg)`, `setGraceValidUntil(pkg, millis)`,
 - Uses `serviceScope` on `Dispatchers.Main.immediate`
 
 ### Service ↔ Activity Data Flow
+
+#### Restricted-app blocking flow
 
 ```
 User opens restricted app
@@ -272,6 +324,24 @@ GracePeriodService
    ├── Shows notification countdown
    └── On expiry: queries UsageStatsManager for actual foreground app;
        either re-blocks (user still in app) or marks graceExpiredForPackage (user left)
+```
+
+#### Suggestion flow (non-restricted apps)
+
+```
+User opens non-restricted app (>5 times in 5 h)
+        │
+        ▼
+ChillpillAccessibilityService.handleNonRestrictedApp()
+   ├── Checks: not in ExcludedApps, has launcher activity, count > 5,
+   │   not already suggested this session, not ignored/permanently excluded
+   └── Starts SuggestRestrictionActivity (in its own task)
+        │
+        ▼
+SuggestRestrictionActivity (dialog overlay, intercepted app visible behind it)
+   ├── "Restrict App"    → adds pkg to RestrictedAppsRepository, clears tracker state, finishes
+   ├── "Ignore (7 days)" → calls SuggestionRepository.ignoreForOneWeek(pkg), finishes
+   └── "Never ask again" → calls SuggestionRepository.addPermanentlyExcluded(pkg), finishes
 ```
 
 ---
@@ -299,6 +369,11 @@ All in-app navigation happens via a single `NavHost` in `MainActivity`:
 
 `AppBlockActivity` is a **separate Activity** (not part of the NavHost) launched by the
 accessibility service via Intent with `EXTRA_PACKAGE_NAME` and `EXTRA_IS_RE_INTERVENTION`.
+
+`SuggestRestrictionActivity` is another **separate Activity** launched by the accessibility
+service when a non-restricted app is used frequently. It is themed as a translucent dialog
+(`Theme.Chillpill.Dialog`) and runs in its own task (`taskAffinity=""`,
+`excludeFromRecents="true"`) so the intercepted app remains visible behind the popup.
 
 ### 7.2 ViewModel Summary
 
@@ -349,6 +424,7 @@ All ViewModels expose state via `StateFlow` and screens collect it with
 | `MainActivity` | Activity | Yes (launcher) | Main Compose host |
 | `ChillpillSettingsActivity` | Activity | Yes | Accessibility settings trampoline |
 | `AppBlockActivity` | Activity | No | Block screen |
+| `SuggestRestrictionActivity` | Activity | No | Suggestion popup dialog (`taskAffinity=""`, `excludeFromRecents`) |
 | `ChillpillAccessibilityService` | Service | No | App-launch detection via a11y |
 | `GracePeriodService` | Service | No | Grace-period foreground timer |
 
@@ -386,6 +462,11 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
    `object` (singleton) shared between the accessibility service and grace-period service.
 8. **Separate Activity for block screen** — `AppBlockActivity` is launched outside the
    NavHost by the accessibility service so it can overlay any app.
+9. **Separate Activity for suggestion dialog** — `SuggestRestrictionActivity` runs in its
+   own task so the intercepted app stays visible behind the translucent dialog.
+10. **In-memory tracker + DataStore persistence for suggestions** — `AppOpenTracker`
+   provides fast, transient frequency counting; `SuggestionRepository` persists user
+   choices (7-day ignore and permanent exclusion) across restarts.
 
 ---
 
@@ -393,9 +474,9 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
 
 | Path | Contents |
 |------|----------|
-| `res/values/strings.xml` | App name, block-screen messages, accessibility service description |
+| `res/values/strings.xml` | App name, block-screen messages, suggestion-popup messages, accessibility service description |
 | `res/values/colors.xml` | Color definitions |
-| `res/values/themes.xml` | `Theme.Chillpill` (main) and `Theme.Chillpill.Block` (block screen) |
+| `res/values/themes.xml` | `Theme.Chillpill` (main), `Theme.Chillpill.Block` (block screen), `Theme.Chillpill.Dialog` (translucent suggestion popup) |
 | `res/drawable/block_activity_background.jpg` | Block-screen background image |
 | `res/drawable/block_background.xml` | Gradient drawable for block overlay |
 | `res/drawable/ic_launcher_foreground.xml` | Vector launcher foreground |
