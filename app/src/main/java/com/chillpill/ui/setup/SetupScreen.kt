@@ -1,8 +1,11 @@
 package com.chillpill.ui.setup
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -76,7 +79,24 @@ fun SetupScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
-            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            transitionSpec = {
+                val durationMillis = 300
+                if (targetState > initialState) {
+                    slideInHorizontally(
+                        animationSpec = tween(durationMillis)
+                    ) { fullWidth -> fullWidth } + fadeIn() togetherWith
+                        slideOutHorizontally(
+                            animationSpec = tween(durationMillis)
+                        ) { fullWidth -> -fullWidth / 4 } + fadeOut()
+                } else {
+                    slideInHorizontally(
+                        animationSpec = tween(durationMillis)
+                    ) { fullWidth -> -fullWidth / 4 } + fadeIn() togetherWith
+                        slideOutHorizontally(
+                            animationSpec = tween(durationMillis)
+                        ) { fullWidth -> fullWidth } + fadeOut()
+                }
+            },
             label = "setup_step"
         ) { step ->
             Column(modifier = Modifier.fillMaxSize()) {
