@@ -58,6 +58,10 @@ fun SettingsScreen(
 ) {
     val waitTimeSecondsInput by viewModel.waitTimeSecondsInput.collectAsStateWithLifecycle()
     val gracePeriodMinutesInput by viewModel.gracePeriodMinutesInput.collectAsStateWithLifecycle()
+    val originalWaitTime by viewModel.originalWaitTimeSeconds.collectAsStateWithLifecycle()
+    val originalGracePeriod by viewModel.originalGracePeriodMinutes.collectAsStateWithLifecycle()
+    val originalRestrictedPackages by viewModel.originalRestrictedPackages.collectAsStateWithLifecycle()
+    val restrictedPackages by viewModel.restrictedPackages.collectAsStateWithLifecycle()
     val restrictedAppsInfo by viewModel.restrictedAppsInfo.collectAsStateWithLifecycle()
     val expandedAppPackage by viewModel.expandedAppPackage.collectAsStateWithLifecycle()
     val hasChanges by viewModel.hasChanges.collectAsStateWithLifecycle()
@@ -119,11 +123,24 @@ fun SettingsScreen(
                     (waitTimeSecondsInput.toIntOrNull() ?: 0) !in 1..7200
                 val gracePeriodInvalid = gracePeriodMinutesInput.isEmpty() ||
                     (gracePeriodMinutesInput.toIntOrNull() ?: 0) !in 1..1440
+                val draftWait = waitTimeSecondsInput.toIntOrNull()?.coerceIn(1, 7200) ?: originalWaitTime
+                val draftGrace = gracePeriodMinutesInput.toIntOrNull()?.coerceIn(1, 1440) ?: originalGracePeriod
+                val hintStyle = MaterialTheme.typography.bodySmall
+                val hintColor = MaterialTheme.colorScheme.onSurfaceVariant
                 OutlinedTextField(
                     value = waitTimeSecondsInput,
                     onValueChange = { viewModel.onWaitTimeChanged(it) },
                     label = { Text("Wait time (seconds)") },
                     isError = waitTimeInvalid,
+                    supportingText = if (draftWait != originalWaitTime) {
+                        {
+                            Text(
+                                text = "Before: $originalWaitTime",
+                                style = hintStyle,
+                                color = hintColor
+                            )
+                        }
+                    } else null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .onFocusChanged { if (!it.isFocused) viewModel.onWaitTimeFocusLost() },
@@ -136,6 +153,15 @@ fun SettingsScreen(
                     onValueChange = { viewModel.onGracePeriodChanged(it) },
                     label = { Text("Grace period (minutes)") },
                     isError = gracePeriodInvalid,
+                    supportingText = if (draftGrace != originalGracePeriod) {
+                        {
+                            Text(
+                                text = "Before: $originalGracePeriod",
+                                style = hintStyle,
+                                color = hintColor
+                            )
+                        }
+                    } else null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .onFocusChanged { if (!it.isFocused) viewModel.onGracePeriodFocusLost() },
@@ -143,18 +169,32 @@ fun SettingsScreen(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                 )
 
+                val restrictedAdded = (restrictedPackages - originalRestrictedPackages).size
+                val restrictedDeleted = (originalRestrictedPackages - restrictedPackages).size
+                val restrictedHints = buildList {
+                    if (restrictedAdded > 0) add("$restrictedAdded added")
+                    if (restrictedDeleted > 0) add("$restrictedDeleted deleted")
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 24.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Restricted apps",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.weight(1f)
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Restricted apps",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (restrictedHints.isNotEmpty()) {
+                            Text(
+                                text = restrictedHints.joinToString(", "),
+                                style = hintStyle,
+                                color = hintColor
+                            )
+                        }
+                    }
                     IconButton(onClick = onEditRestrictedApps) {
                         Icon(Icons.Filled.Edit, contentDescription = "Edit restricted apps")
                     }
@@ -175,6 +215,7 @@ fun SettingsScreen(
                     ) {
                         items(restrictedAppsInfo, key = { it.packageName }) { appInfo ->
                             val isExpanded = expandedAppPackage == appInfo.packageName
+                            val isNewlyAdded = appInfo.packageName in restrictedPackages && appInfo.packageName !in originalRestrictedPackages
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = CardDefaults.cardColors(
@@ -202,6 +243,14 @@ fun SettingsScreen(
                                             style = MaterialTheme.typography.bodyLarge,
                                             modifier = Modifier.weight(1f)
                                         )
+                                        if (isNewlyAdded) {
+                                            Text(
+                                                text = "new",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Spacer(modifier = Modifier.size(4.dp))
+                                        }
                                         IconButton(
                                             onClick = { viewModel.removeRestrictedApp(appInfo.packageName) }
                                         ) {

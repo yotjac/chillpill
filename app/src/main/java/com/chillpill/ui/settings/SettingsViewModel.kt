@@ -44,9 +44,15 @@ class SettingsViewModel(
 ) : ViewModel() {
 
     // Original (persisted) state - loaded once on init
-    private var originalWaitTimeSeconds: Int = DEFAULT_WAIT_SECONDS
-    private var originalGracePeriodMinutes: Int = DEFAULT_GRACE_MINUTES
-    private var originalRestrictedPackages: Set<String> = emptySet()
+    private val _originalWaitTimeSeconds = MutableStateFlow(DEFAULT_WAIT_SECONDS)
+    val originalWaitTimeSeconds: StateFlow<Int> = _originalWaitTimeSeconds.asStateFlow()
+
+    private val _originalGracePeriodMinutes = MutableStateFlow(DEFAULT_GRACE_MINUTES)
+    val originalGracePeriodMinutes: StateFlow<Int> = _originalGracePeriodMinutes.asStateFlow()
+
+    private val _originalRestrictedPackages = MutableStateFlow<Set<String>>(emptySet())
+    val originalRestrictedPackages: StateFlow<Set<String>> = _originalRestrictedPackages.asStateFlow()
+
     private var originalReInterventionDisabled: Set<String> = emptySet()
 
     // Draft state (user edits, not persisted until Save)
@@ -80,11 +86,13 @@ class SettingsViewModel(
         _restrictedPackages,
         _reInterventionDisabledPackages
     ) { waitInput, graceInput, restricted, reInterventionDisabled ->
-        val waitDraft = waitInput.toIntOrNull()?.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS) ?: originalWaitTimeSeconds
-        val graceDraft = graceInput.toIntOrNull()?.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES) ?: originalGracePeriodMinutes
-        waitDraft != originalWaitTimeSeconds ||
-            graceDraft != originalGracePeriodMinutes ||
-            restricted != originalRestrictedPackages ||
+        val origWait = _originalWaitTimeSeconds.value
+        val origGrace = _originalGracePeriodMinutes.value
+        val waitDraft = waitInput.toIntOrNull()?.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS) ?: origWait
+        val graceDraft = graceInput.toIntOrNull()?.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES) ?: origGrace
+        waitDraft != origWait ||
+            graceDraft != origGrace ||
+            restricted != _originalRestrictedPackages.value ||
             reInterventionDisabled != originalReInterventionDisabled
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
@@ -106,15 +114,15 @@ class SettingsViewModel(
     init {
         viewModelScope.launch {
             val settings = app.settingsRepository.settings.first()
-            originalWaitTimeSeconds = settings.waitTimeSeconds
-            originalGracePeriodMinutes = settings.gracePeriodMinutes
+            _originalWaitTimeSeconds.value = settings.waitTimeSeconds
+            _originalGracePeriodMinutes.value = settings.gracePeriodMinutes
             _waitTimeSecondsInput.value = settings.waitTimeSeconds.toString()
             _gracePeriodMinutesInput.value = settings.gracePeriodMinutes.toString()
         }
         viewModelScope.launch {
             val restricted = app.restrictedAppsRepository.restrictedPackages.first()
             val reInterventionDisabled = app.restrictedAppsRepository.reInterventionDisabledPackages.first()
-            originalRestrictedPackages = restricted
+            _originalRestrictedPackages.value = restricted
             originalReInterventionDisabled = reInterventionDisabled
             _restrictedPackages.value = restricted
             _reInterventionDisabledPackages.value = reInterventionDisabled
@@ -303,12 +311,12 @@ class SettingsViewModel(
 
     private fun getDraftWaitTimeSeconds(): Int {
         return _waitTimeSecondsInput.value.toIntOrNull()
-            ?.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS) ?: originalWaitTimeSeconds
+            ?.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS) ?: _originalWaitTimeSeconds.value
     }
 
     private fun getDraftGracePeriodMinutes(): Int {
         return _gracePeriodMinutesInput.value.toIntOrNull()
-            ?.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES) ?: originalGracePeriodMinutes
+            ?.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES) ?: _originalGracePeriodMinutes.value
     }
 
     /**
@@ -321,10 +329,10 @@ class SettingsViewModel(
         val waitDraft = getDraftWaitTimeSeconds()
         val graceDraft = getDraftGracePeriodMinutes()
         val restrictedDraft = _restrictedPackages.value
-        if (graceDraft > originalGracePeriodMinutes) return true
-        if (waitDraft < originalWaitTimeSeconds) return true
-        if (restrictedDraft.size < originalRestrictedPackages.size ||
-            !originalRestrictedPackages.all { it in restrictedDraft }) return true
+        if (graceDraft > _originalGracePeriodMinutes.value) return true
+        if (waitDraft < _originalWaitTimeSeconds.value) return true
+        if (restrictedDraft.size < _originalRestrictedPackages.value.size ||
+            !_originalRestrictedPackages.value.all { it in restrictedDraft }) return true
         return false
     }
 
@@ -335,7 +343,7 @@ class SettingsViewModel(
             _confirmationPhase.value = AppBlockPhase.WAITING
             confirmationTimerJob?.cancel()
             confirmationTimerJob = viewModelScope.launch {
-                val waitTimeSeconds = originalWaitTimeSeconds.coerceAtLeast(1)
+                val waitTimeSeconds = _originalWaitTimeSeconds.value.coerceAtLeast(1)
                 val totalMs = waitTimeSeconds * 1000L
                 var elapsedMs = 0L
                 while (elapsedMs < totalMs) {
@@ -379,9 +387,9 @@ class SettingsViewModel(
                 app.restrictedAppsRepository.setRestricted(restricted)
                 app.restrictedAppsRepository.setReInterventionDisabled(reInterventionDisabled)
             }
-            originalWaitTimeSeconds = waitSeconds
-            originalGracePeriodMinutes = graceMinutes
-            originalRestrictedPackages = restricted
+            _originalWaitTimeSeconds.value = waitSeconds
+            _originalGracePeriodMinutes.value = graceMinutes
+            _originalRestrictedPackages.value = restricted
             originalReInterventionDisabled = reInterventionDisabled
             _showConfirmationScreen.value = false
             _confirmationProgress.value = 0f

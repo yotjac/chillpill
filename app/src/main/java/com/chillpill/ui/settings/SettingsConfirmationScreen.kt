@@ -1,5 +1,7 @@
 package com.chillpill.ui.settings
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -18,10 +20,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -29,6 +35,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.chillpill.R
 import com.chillpill.ui.appblock.AppBlockPhase
+import kotlin.math.hypot
 
 @Composable
 fun SettingsConfirmationScreen(
@@ -38,18 +45,37 @@ fun SettingsConfirmationScreen(
     onSave: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val revealFraction = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        revealFraction.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing)
+        )
+    }
+
     val animatedProgress: Float by animateFloatAsState(
         targetValue = progress,
         animationSpec = tween(durationMillis = 1000, easing = LinearEasing),
         label = "settingsConfirmationOverlayProgress"
     )
 
-    Box(modifier = modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.6f))
-        )
+    val scrimColor = Color.Black.copy(alpha = 0.7f)
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .drawBehind {
+                val fraction = revealFraction.value
+                val origin = Offset(size.width, 0f)
+                val maxRadius = hypot(size.width, size.height)
+                val radius = maxRadius * fraction
+                drawCircle(
+                    color = scrimColor,
+                    radius = radius,
+                    center = origin
+                )
+            }
+    ) {
         val overlayHeight = animatedProgress
         if (overlayHeight > 0f) {
             Box(
@@ -64,7 +90,8 @@ fun SettingsConfirmationScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 48.dp),
+                .padding(horizontal = 24.dp, vertical = 48.dp)
+                .alpha(revealFraction.value),
             verticalArrangement = Arrangement.SpaceBetween,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
