@@ -12,5 +12,5 @@
     <string name="suggest_message">Let ChillPill help you reduce your screen time by restricting access to this app</string>
     <string name="suggest_ignore">Ignore</string>
     <string name="suggest_add">Restrict App</string>
-    <string name="suggest_never">Never ask me again</string>
+    <string name="suggest_never">Never ask me again about %1$s</string>
 </resources>

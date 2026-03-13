@@ -2,7 +2,11 @@ package com.chillpill.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.usage.UsageEvents
+import android.app.usage.UsageStatsManager
+import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.chillpill.AppBlockActivity
@@ -44,6 +48,10 @@ class ChillpillAccessibilityService : AccessibilityService() {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
         Log.d(TAG, "onAccessibilityEvent: foreground pkg=$pkg")
+        if (pkg == applicationContext.packageName) {
+            BlockingSharedState.setCurrentForegroundPackage(pkg)
+            return
+        }
         eventProcessorScope.launch {
             // Same-app check and processEvent run on single thread so previousForegroundPackage has no race
             if (pkg == previousForegroundPackage) {
@@ -99,6 +107,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
     private fun recordLeavingRestrictedApp(restrictedPackages: Set<String>, newPackage: String, graceMs: Long) {
         // Do not grant grace when switching to our block activity: user did not leave the app voluntarily
         if (newPackage == applicationContext.packageName) return
+        if (BlockingSharedState.currentForegroundPackage == applicationContext.packageName) return
         previousForegroundPackage?.let { prev ->
             if (prev in restrictedPackages && prev != newPackage) {
                 BlockingSharedState.setGraceValidUntil(prev, System.currentTimeMillis() + graceMs)
@@ -155,12 +164,16 @@ class ChillpillAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Track opens in the in-memory tracker.
-        app.appOpenTracker.recordOpen(pkg)
-        val count = app.appOpenTracker.getRecentOpenCount(pkg)
-        Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg recentOpenCount=$count")
-
-        if (count <= 5 || app.appOpenTracker.wasSuggestionShown(pkg)) {
+        if (app.appOpenTracker.wasSuggestionShown(pkg)) {
+            setPreviousForeground(pkg)
+            return
+        }
+        val foregroundMs = withContext(Dispatchers.IO) {
+            queryForegroundTimeMs(pkg, SUGGESTION_WINDOW_MS)
+        }
+        val foregroundMinutes = foregroundMs / 60_000L
+        Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg foregroundMinutes=$foregroundMinutes in last 12h")
+        if (foregroundMinutes < SUGGESTION_THRESHOLD_MINUTES) {
             setPreviousForeground(pkg)
             return
         }
@@ -180,6 +193,37 @@ class ChillpillAccessibilityService : AccessibilityService() {
         app.appOpenTracker.markSuggestionShown(pkg)
         startSuggestRestrictionActivity(pkg)
         setPreviousForeground(pkg)
+    }
+
+    private fun queryForegroundTimeMs(pkg: String, windowMs: Long): Long {
+        val usm = applicationContext.getSystemService(Context.USAGE_STATS_SERVICE)
+            as? UsageStatsManager ?: return 0L
+        val now = System.currentTimeMillis()
+        val events = usm.queryEvents(now - windowMs, now)
+        val event = UsageEvents.Event()
+        var totalMs = 0L
+        var lastResumed = -1L
+        val resumeType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+            UsageEvents.Event.ACTIVITY_RESUMED
+        else UsageEvents.Event.MOVE_TO_FOREGROUND
+        val pauseType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+            UsageEvents.Event.ACTIVITY_PAUSED
+        else UsageEvents.Event.MOVE_TO_BACKGROUND
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            if (event.packageName != pkg) continue
+            when (event.eventType) {
+                resumeType -> lastResumed = event.timeStamp
+                pauseType -> {
+                    if (lastResumed > 0) {
+                        totalMs += event.timeStamp - lastResumed
+                        lastResumed = -1L
+                    }
+                }
+            }
+        }
+        if (lastResumed > 0) totalMs += now - lastResumed
+        return totalMs
     }
 
     private fun startBlockActivity(packageName: String, isReIntervention: Boolean) {
@@ -216,5 +260,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "ChillpillA11y"
+        private const val SUGGESTION_WINDOW_MS = 12L * 60L * 60L * 1000L // 12 hours
+        private const val SUGGESTION_THRESHOLD_MINUTES = 20L
     }
 }

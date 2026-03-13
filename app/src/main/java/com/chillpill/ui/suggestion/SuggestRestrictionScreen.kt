@@ -95,7 +95,7 @@ fun SuggestRestrictionScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = stringResource(R.string.suggest_never),
+                        text = stringResource(R.string.suggest_never, appName),
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                     )
                 }

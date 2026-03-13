@@ -13,9 +13,9 @@ configurable wait timer. After the timer completes, the user may either go home 
 continue into the app with a time-limited **grace period**. When the grace period expires
 the block screen reappears.
 
-Additionally, when the user opens a **non-restricted** app frequently (more than 5 times
-in 5 hours), ChillPill proactively shows a **suggestion popup** asking whether to restrict
-that app. The user can accept, ignore (7-day cooldown), or permanently dismiss the
+Additionally, when the user opens a **non-restricted** app and has used it for more than
+20 minutes in the last 12 hours, ChillPill proactively shows a **suggestion popup** asking
+whether to restrict that app. The user can accept, ignore (7-day cooldown), or permanently dismiss the
 suggestion for that app.
 
 Key concepts:
@@ -26,8 +26,8 @@ Key concepts:
 | **Wait time** | Seconds the user must wait on the block screen (default 12, range 1–7200) |
 | **Grace period** | Minutes the user can use the app after waiting (default 5, range 1–1440) |
 | **Re-intervention** | A second block shown when the grace period expires while the user is still in the restricted app; can be toggled per restricted app |
-| **Suggestion popup** | A dialog shown when a non-restricted, non-excluded app is opened >5 times in 5 hours; offers to restrict it |
-| **Excluded app** | An app that never triggers a suggestion popup — either hardcoded (browsers, utilities, etc.) or user-chosen via "Never ask me again" |
+| **Suggestion popup** | A dialog shown when a non-restricted, non-excluded app is opened and has >20 min foreground time in the last 12 h; offers to restrict it |
+| **Excluded app** | An app that never triggers a suggestion popup — either hardcoded (browsers, utilities, etc.) or user-chosen via "Never ask me again about [app name]" |
 
 ---
 
@@ -82,7 +82,7 @@ com.chillpill/
 │   │   ├── Settings.kt                Data class (waitTimeSeconds, gracePeriodMinutes)
 │   │   └── SettingsRepository.kt      DataStore for settings + setupCompleted flag
 │   ├── suggestion/
-│   │   ├── AppOpenTracker.kt          In-memory sliding-window counter (5h) per package
+│   │   ├── AppOpenTracker.kt          In-memory flag for per-session suggestion deduplication
 │   │   ├── ExcludedApps.kt            Hardcoded Set<String> of never-suggest packages
 │   │   └── SuggestionRepository.kt    DataStore for ignored (7-day) + permanently excluded packages
 │   └── usage/
@@ -226,13 +226,13 @@ repository properties. No Hilt, Dagger, or Koin.
 
 #### AppOpenTracker (in-memory)
 
-Thread-safe sliding-window counter that tracks per-package app-open timestamps within a
-5-hour window. Uses a `ConcurrentHashMap<String, MutableList<Long>>`.
+In-memory set of package names for which the suggestion dialog has already been shown in the
+current process. Used to avoid showing the suggestion popup multiple times in rapid
+succession for the same app. Suggestion eligibility (e.g. >20 min foreground in 12 h) is
+computed via **UsageStatsManager** in the accessibility service.
 
 | Method | Purpose |
 |--------|---------|
-| `recordOpen(pkg)` | Appends current timestamp; prunes entries older than 5 h |
-| `getRecentOpenCount(pkg)` | Returns how many opens are within the window |
 | `markSuggestionShown(pkg)` / `wasSuggestionShown(pkg)` | Per-session flag to avoid repeat popups |
 | `clearSuggestionShown(pkg)` | Resets the flag (called when the user acts on the popup) |
 
@@ -248,7 +248,7 @@ an Israeli emergency alert app.
 - **Store name:** `"suggestion_prefs"`
 - **Keys:**
   - `ignored_packages` — JSON string (`Gson`) encoding a `Map<String, Long>` of package name → ignore-expiry timestamp (7-day cooldown)
-  - `permanently_excluded_packages` — `StringSet` of packages the user chose "Never ask me again" for
+  - `permanently_excluded_packages` — `StringSet` of packages the user chose "Never ask me again about [app]" for
 - **Read methods:** `isIgnored(pkg): Boolean`, `isPermanentlyExcluded(pkg): Boolean`
 - **Write methods:** `ignoreForOneWeek(pkg)`, `addPermanentlyExcluded(pkg)`
 
@@ -286,8 +286,9 @@ Key methods: `isInGracePeriod(pkg)`, `setGraceValidUntil(pkg, millis)`,
   2. If package is **not** restricted → `handleNonRestrictedApp`:
      a. Skip if in `ExcludedApps.EXCLUDED_PACKAGES`
      b. Skip if the package has no launcher activity (`getLaunchIntentForPackage == null`)
-     c. Record open in `AppOpenTracker`; if count > 5, not already suggested this session, not ignored, not permanently excluded → launch `SuggestRestrictionActivity`
-- Does **not** start `GracePeriodService`; the block activity starts it when the user taps "Continue", so re-interventions always get a new grace timer.
+     c. If not already suggested this session, query **UsageStatsManager** for foreground time of this package in the last 12 h; if ≥20 min, not ignored, not permanently excluded → launch `SuggestRestrictionActivity`
+- **Self-package event filtering:** Events from the app's own package (e.g. when `AppBlockActivity` or `SuggestRestrictionActivity` is shown) are handled before dispatching to `processEvent`: only `BlockingSharedState.currentForegroundPackage` is updated; `previousForegroundPackage` is left unchanged. This prevents the block screen from "resetting" the same-app guard, so when the restricted app fires a second `TYPE_WINDOW_STATE_CHANGED` during launch (e.g. splash-to-main transition), the service correctly treats it as the same app and does not show the block screen again. When the user taps "Go Home" from the block screen, `recordLeavingRestrictedApp` skips granting grace if `currentForegroundPackage` is the app's own package (user did not voluntarily leave the restricted app).
+- Starts `GracePeriodService` when the user taps "Continue" on the block screen, or when the user taps "Restrict App" in the suggestion popup (so they can continue into the app without seeing the block screen that first time).
 
 ### 6.3 GracePeriodService (Foreground Service)
 
@@ -329,19 +330,21 @@ GracePeriodService
 #### Suggestion flow (non-restricted apps)
 
 ```
-User opens non-restricted app (>5 times in 5 h)
+User opens non-restricted app (>20 min foreground in last 12 h)
         │
         ▼
 ChillpillAccessibilityService.handleNonRestrictedApp()
-   ├── Checks: not in ExcludedApps, has launcher activity, count > 5,
+   ├── Checks: not in ExcludedApps, has launcher activity,
+   │   foreground time (UsageStatsManager) ≥ 20 min in last 12 h,
    │   not already suggested this session, not ignored/permanently excluded
    └── Starts SuggestRestrictionActivity (in its own task)
         │
         ▼
 SuggestRestrictionActivity (dialog overlay, intercepted app visible behind it)
-   ├── "Restrict App"    → adds pkg to RestrictedAppsRepository, clears tracker state, finishes
+   ├── "Restrict App"    → adds pkg to RestrictedAppsRepository, sets grace in BlockingSharedState,
+   │   starts GracePeriodService, clears tracker state, finishes (user continues into app; no block screen this time)
    ├── "Ignore (7 days)" → calls SuggestionRepository.ignoreForOneWeek(pkg), finishes
-   └── "Never ask again" → calls SuggestionRepository.addPermanentlyExcluded(pkg), finishes
+   └── "Never ask again about [app]" → calls SuggestionRepository.addPermanentlyExcluded(pkg), finishes
 ```
 
 ---
@@ -465,8 +468,8 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
 9. **Separate Activity for suggestion dialog** — `SuggestRestrictionActivity` runs in its
    own task so the intercepted app stays visible behind the translucent dialog.
 10. **In-memory tracker + DataStore persistence for suggestions** — `AppOpenTracker`
-   provides fast, transient frequency counting; `SuggestionRepository` persists user
-   choices (7-day ignore and permanent exclusion) across restarts.
+   tracks which packages have had the suggestion shown this session (deduplication);
+   `SuggestionRepository` persists user choices (7-day ignore and permanent exclusion) across restarts.
 
 ---
 
