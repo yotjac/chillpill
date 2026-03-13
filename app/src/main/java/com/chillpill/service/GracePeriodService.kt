@@ -101,7 +101,28 @@ class GracePeriodService : Service() {
         BlockingSharedState.clearGraceForPackage(packageName)
         val currentForeground = queryActualForegroundPackage()
             ?: BlockingSharedState.currentForegroundPackage
+        val reInterventionDisabled = withContext(Dispatchers.IO) {
+            app.restrictedAppsRepository.reInterventionDisabledPackages.first()
+        }
         Log.d(TAG, "onGraceExpired: pkg=$packageName currentForeground=$currentForeground")
+        if (packageName in reInterventionDisabled) {
+            Log.d(TAG, "onGraceExpired: re-intervention disabled for pkg=$packageName, recording event only")
+            withContext(Dispatchers.IO) {
+                if (currentForeground == packageName) {
+                    app.usageEventsRepository.recordEvent(
+                        packageName,
+                        UsageEventType.GRACE_EXPIRED_WHILE_ACTIVE
+                    )
+                } else {
+                    app.usageEventsRepository.recordEvent(
+                        packageName,
+                        UsageEventType.GRACE_EXPIRED_WHILE_AWAY
+                    )
+                }
+            }
+            stopSelf()
+            return
+        }
         if (currentForeground == packageName) {
             Log.d(TAG, "onGraceExpired: user still in app, showing block")
             withContext(Dispatchers.IO) {

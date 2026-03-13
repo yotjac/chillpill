@@ -172,13 +172,13 @@ private fun PermissionsStep(
         verticalArrangement = Arrangement.Center
     ) {
         PermissionCard(
-            title = "Accessibility Service",
+            title = "Enable Accessibility Service",
             granted = accessibilityGranted,
             onClick = onFixPermissions
         )
         Spacer(modifier = Modifier.height(12.dp))
         PermissionCard(
-            title = "Usage Access",
+            title = "Enable App Usage Access",
             granted = usageAccessGranted,
             onClick = onFixUsageAccess
         )
@@ -237,7 +237,7 @@ private fun RestrictedAppsStep(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
-            text = "Pick Your Chill Apps",
+            text = "Pick Your Restricted Apps",
             style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
             color = MaterialTheme.colorScheme.primary,
             textAlign = TextAlign.Center,

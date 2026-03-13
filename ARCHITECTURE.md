@@ -20,7 +20,7 @@ Key concepts:
 | **Restricted app** | An app the user chose to restrict |
 | **Wait time** | Seconds the user must wait on the block screen (default 30, range 1–7200) |
 | **Grace period** | Minutes the user can use the app after waiting (default 5, range 1–1440) |
-| **Re-intervention** | A second block shown when the grace period expires while the user is still in the restricted app |
+| **Re-intervention** | A second block shown when the grace period expires while the user is still in the restricted app; can be toggled per restricted app |
 
 ---
 
@@ -171,9 +171,9 @@ repository properties. No Hilt, Dagger, or Koin.
 ### 5.2 RestrictedAppsRepository (DataStore)
 
 - **Store name:** `"restricted_apps"`
-- **Key:** `package_names` (String Set)
-- **Exposed flow:** `restrictedPackages: Flow<Set<String>>`
-- **Write method:** `setRestricted(packageNames: Set<String>)`
+- **Keys:** `package_names` (String Set), `re_intervention_disabled` (String Set of package names that skip re-intervention)
+- **Exposed flows:** `restrictedPackages: Flow<Set<String>>`, `reInterventionDisabledPackages: Flow<Set<String>>`
+- **Write methods:** `setRestricted(packageNames: Set<String>)`, `setReInterventionDisabled(packageNames: Set<String>)`
 
 ### 5.3 UsageEventsRepository (Room)
 
@@ -307,13 +307,21 @@ accessibility service via Intent with `EXTRA_PACKAGE_NAME` and `EXTRA_IS_RE_INTE
 | `HomeViewModel` | `permissionsOk`, `showUsageAccessBanner`, `restrictedPackages`, `todayAttempts`, `todayEntered` | Check a11y/usage-access permissions, load today's aggregate stats |
 | `SetupViewModel` | `currentStep` (0–3), `accessibilityGranted`, `usageAccessGranted`, `restrictedPackages`, `canAdvance` | Drive 4-step onboarding, validate each step before advancing |
 | `SettingsViewModel` | `waitTimeSecondsInput`, `gracePeriodMinutesInput`, `restrictedAppsInfo`, `installedApps`, `appSearchQuery` | Persist settings, load/sort installed apps (by usage stats), filter search |
+| `SettingsViewModel` (extended) | `expandedAppPackage`, `reInterventionDisabledPackages` | Track which restricted app card is expanded and which apps have re-intervention disabled |
 | `StatisticsViewModel` | `selectedRange`, `stats: List<AppStatistic>`, `isLoading`, `focusedSeries` | Aggregate daily stats into buckets, auto-refresh every 15 s, legend focus |
 | `AppBlockViewModel` | `phase` (WAITING/COMPLETED), `progress` (0→1), `openCount24h` | Run wait countdown, emit one-shot events (`RequestFinish`, `RequestGoHome`) via Channel |
 
 All ViewModels expose state via `StateFlow` and screens collect it with
 `collectAsStateWithLifecycle`.
 
-### 7.3 Theme
+### 7.3 Settings UI Details
+
+- The **Restricted apps** section on `SettingsScreen` shows each restricted app as an expandable `Card` with the app icon, label, and an always-visible delete icon in the header row.
+- The entire card header is tappable and includes a chevron icon to indicate that it can expand for additional settings; only one app card is expanded at a time.
+- Expanding a card reveals a single toggle labeled **"Block again after grace"**, which controls whether re-intervention is enabled for that specific app.
+- A horizontal divider between the header and expanded area uses the theme's `onSurface` color so it appears as a high-contrast white/black line depending on light or dark mode.
+
+### 7.4 Theme
 
 - `ChillpillTheme` wraps Material 3 `MaterialTheme` with custom light/dark color schemes
 - Palette: Slate/Teal (Teal600 primary in light, Teal500 in dark, Slate900 backgrounds)

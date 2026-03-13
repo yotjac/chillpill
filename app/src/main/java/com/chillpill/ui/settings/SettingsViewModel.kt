@@ -18,7 +18,8 @@ import kotlinx.coroutines.withContext
 
 data class AppInfo(
     val packageName: String,
-    val label: String
+    val label: String,
+    val reInterventionEnabled: Boolean = true
 )
 
 private const val DEFAULT_WAIT_SECONDS = 12
@@ -47,6 +48,12 @@ class SettingsViewModel(
     private val _restrictedAppsInfo = MutableStateFlow<List<AppInfo>>(emptyList())
     val restrictedAppsInfo: StateFlow<List<AppInfo>> = _restrictedAppsInfo.asStateFlow()
 
+    private val _reInterventionDisabledPackages = MutableStateFlow<Set<String>>(emptySet())
+    val reInterventionDisabledPackages: StateFlow<Set<String>> = _reInterventionDisabledPackages.asStateFlow()
+
+    private val _expandedAppPackage = MutableStateFlow<String?>(null)
+    val expandedAppPackage: StateFlow<String?> = _expandedAppPackage.asStateFlow()
+
     private val _appSearchQuery = MutableStateFlow("")
     val appSearchQuery: StateFlow<String> = _appSearchQuery.asStateFlow()
 
@@ -56,11 +63,17 @@ class SettingsViewModel(
                 _waitTimeSecondsInput.value = settings.waitTimeSeconds.toString()
                 _gracePeriodMinutesInput.value = settings.gracePeriodMinutes.toString()
             }
-            loadInstalledApps()
         }
         viewModelScope.launch {
             app.restrictedAppsRepository.restrictedPackages.collect { set ->
                 _restrictedPackages.value = set
+                loadRestrictedAppsInfo()
+                loadInstalledApps()
+            }
+        }
+        viewModelScope.launch {
+            app.restrictedAppsRepository.reInterventionDisabledPackages.collect { set ->
+                _reInterventionDisabledPackages.value = set
                 loadRestrictedAppsInfo()
             }
         }
@@ -69,13 +82,18 @@ class SettingsViewModel(
     private fun loadRestrictedAppsInfo() {
         viewModelScope.launch {
             val packages = _restrictedPackages.value
+            val disabledPackages = _reInterventionDisabledPackages.value
             val list = withContext(Dispatchers.IO) {
                 val pm = app.packageManager
                 packages.mapNotNull { packageName ->
                     try {
                         val applicationInfo = pm.getApplicationInfo(packageName, 0)
                         val label = pm.getApplicationLabel(applicationInfo).toString()
-                        AppInfo(packageName = packageName, label = label)
+                        AppInfo(
+                            packageName = packageName,
+                            label = label,
+                            reInterventionEnabled = packageName !in disabledPackages
+                        )
                     } catch (_: PackageManager.NameNotFoundException) {
                         null
                     }
@@ -172,9 +190,15 @@ class SettingsViewModel(
             _restrictedPackages.value + packageName
         } else {
             _restrictedPackages.value - packageName
+        }.also { updated ->
+            if (packageName !in updated) {
+                _reInterventionDisabledPackages.value =
+                    _reInterventionDisabledPackages.value - packageName
+            }
         }
         viewModelScope.launch {
             app.restrictedAppsRepository.setRestricted(_restrictedPackages.value)
+            app.restrictedAppsRepository.setReInterventionDisabled(_reInterventionDisabledPackages.value)
         }
         loadRestrictedAppsInfo()
     }
@@ -185,6 +209,26 @@ class SettingsViewModel(
             app.restrictedAppsRepository.setRestricted(_restrictedPackages.value)
         }
         loadRestrictedAppsInfo()
+    }
+
+    fun onReInterventionToggled(packageName: String, enabled: Boolean) {
+        _reInterventionDisabledPackages.value = if (enabled) {
+            _reInterventionDisabledPackages.value - packageName
+        } else {
+            _reInterventionDisabledPackages.value + packageName
+        }
+        viewModelScope.launch {
+            app.restrictedAppsRepository.setReInterventionDisabled(_reInterventionDisabledPackages.value)
+        }
+        loadRestrictedAppsInfo()
+    }
+
+    fun onToggleExpanded(packageName: String) {
+        _expandedAppPackage.value = if (_expandedAppPackage.value == packageName) {
+            null
+        } else {
+            packageName
+        }
     }
 
     fun onSearchQueryChanged(query: String) {

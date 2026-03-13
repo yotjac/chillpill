@@ -108,6 +108,14 @@ class ChillpillAccessibilityService : AccessibilityService() {
     private suspend fun tryHandleGraceExpiredReIntervention(pkg: String): Boolean {
         val expiredPkg = BlockingSharedState.graceExpiredForPackage ?: return false
         if (expiredPkg != pkg) return false
+        val disabledPackages = withContext(Dispatchers.IO) {
+            app.restrictedAppsRepository.reInterventionDisabledPackages.first()
+        }
+        if (pkg in disabledPackages) {
+            Log.d(TAG, "tryHandleGraceExpiredReIntervention: re-intervention disabled for pkg=$pkg, clearing flag without blocking")
+            BlockingSharedState.setGraceExpiredForPackage(null)
+            return true
+        }
         BlockingSharedState.setGraceExpiredForPackage(null)
         withContext(Dispatchers.IO) {
             app.usageEventsRepository.recordEvent(pkg, UsageEventType.OPEN_ATTEMPT)

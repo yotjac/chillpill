@@ -15,14 +15,23 @@ class RestrictedAppsRepository(private val context: Context) {
 
     private object Keys {
         val PACKAGE_NAMES = stringSetPreferencesKey("package_names")
+        val RE_INTERVENTION_DISABLED = stringSetPreferencesKey("re_intervention_disabled")
     }
 
     val restrictedPackages: Flow<Set<String>> = context.restrictedAppsDataStore.data.map { prefs ->
         prefs[Keys.PACKAGE_NAMES] ?: emptySet()
     }
 
+    val reInterventionDisabledPackages: Flow<Set<String>> = context.restrictedAppsDataStore.data.map { prefs ->
+        prefs[Keys.RE_INTERVENTION_DISABLED] ?: emptySet()
+    }
+
     suspend fun setRestricted(packageNames: Set<String>) {
         context.restrictedAppsDataStore.edit { it[Keys.PACKAGE_NAMES] = packageNames }
+    }
+
+    suspend fun setReInterventionDisabled(packageNames: Set<String>) {
+        context.restrictedAppsDataStore.edit { it[Keys.RE_INTERVENTION_DISABLED] = packageNames }
     }
 
 }
