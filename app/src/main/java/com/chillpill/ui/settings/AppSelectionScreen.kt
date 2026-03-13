@@ -34,11 +34,39 @@ import com.chillpill.ui.common.AppIcon
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppSelectionScreen(
+    viewModel: SettingsViewModel,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    AppSelectionContent(
+        viewModel = viewModel,
+        onBack = onBack,
+        modifier = modifier
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppSelectionScreen(
     app: ChillpillApp,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.Factory(app))
+    val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.Factory(app, draftOnly = false))
+    AppSelectionContent(
+        viewModel = viewModel,
+        onBack = onBack,
+        modifier = modifier
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AppSelectionContent(
+    viewModel: SettingsViewModel,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
     val restrictedPackages by viewModel.restrictedPackages.collectAsStateWithLifecycle()
     val appSearchQuery by viewModel.appSearchQuery.collectAsStateWithLifecycle()

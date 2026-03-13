@@ -5,6 +5,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,7 +23,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,23 +45,30 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.chillpill.ChillpillApp
 import com.chillpill.ui.common.AppIcon
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    app: ChillpillApp,
+    viewModel: SettingsViewModel,
     onBack: () -> Unit,
     onEditRestrictedApps: () -> Unit,
+    onNavigateHome: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.Factory(app))
     val waitTimeSecondsInput by viewModel.waitTimeSecondsInput.collectAsStateWithLifecycle()
     val gracePeriodMinutesInput by viewModel.gracePeriodMinutesInput.collectAsStateWithLifecycle()
     val restrictedAppsInfo by viewModel.restrictedAppsInfo.collectAsStateWithLifecycle()
     val expandedAppPackage by viewModel.expandedAppPackage.collectAsStateWithLifecycle()
+    val hasChanges by viewModel.hasChanges.collectAsStateWithLifecycle()
+    val showConfirmationScreen by viewModel.showConfirmationScreen.collectAsStateWithLifecycle()
+    val confirmationProgress by viewModel.confirmationProgress.collectAsStateWithLifecycle()
+    val confirmationPhase by viewModel.confirmationPhase.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        viewModel.saveCompletedEvent.collect { onNavigateHome() }
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
@@ -70,157 +78,177 @@ fun SettingsScreen(
                     IconButton(onClick = onBack) {
                         Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
                     }
+                },
+                actions = {
+                    if (showConfirmationScreen) {
+                        Text(
+                            text = "Waiting…",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(end = 16.dp)
+                        )
+                    } else {
+                        TextButton(
+                            onClick = { viewModel.onSaveClicked() },
+                            enabled = hasChanges
+                        ) {
+                            Text("Save")
+                        }
+                    }
                 }
             )
         }
     ) { paddingValues ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(horizontal = 24.dp)
         ) {
-            // Configuration section
-            Text(
-                text = "Configuration",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
-            )
-            val waitTimeInvalid = waitTimeSecondsInput.isEmpty() ||
-                (waitTimeSecondsInput.toIntOrNull() ?: 0) !in 1..7200
-            val gracePeriodInvalid = gracePeriodMinutesInput.isEmpty() ||
-                (gracePeriodMinutesInput.toIntOrNull() ?: 0) !in 1..1440
-            OutlinedTextField(
-                value = waitTimeSecondsInput,
-                onValueChange = { viewModel.onWaitTimeChanged(it) },
-                label = { Text("Wait time (seconds)") },
-                isError = waitTimeInvalid,
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .onFocusChanged { if (!it.isFocused) viewModel.onWaitTimeFocusLost() },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedTextField(
-                value = gracePeriodMinutesInput,
-                onValueChange = { viewModel.onGracePeriodChanged(it) },
-                label = { Text("Grace period (minutes)") },
-                isError = gracePeriodInvalid,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onFocusChanged { if (!it.isFocused) viewModel.onGracePeriodFocusLost() },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-            )
-
-            // Restricted apps section
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 24.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp)
             ) {
                 Text(
-                    text = "Restricted apps",
+                    text = "Configuration",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
-                IconButton(onClick = onEditRestrictedApps) {
-                    Icon(Icons.Filled.Edit, contentDescription = "Edit restricted apps")
-                }
-            }
-            if (restrictedAppsInfo.isEmpty()) {
-                Text(
-                    text = "No apps restricted",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 16.dp)
-                )
-            } else {
-                LazyColumn(
+                val waitTimeInvalid = waitTimeSecondsInput.isEmpty() ||
+                    (waitTimeSecondsInput.toIntOrNull() ?: 0) !in 1..7200
+                val gracePeriodInvalid = gracePeriodMinutesInput.isEmpty() ||
+                    (gracePeriodMinutesInput.toIntOrNull() ?: 0) !in 1..1440
+                OutlinedTextField(
+                    value = waitTimeSecondsInput,
+                    onValueChange = { viewModel.onWaitTimeChanged(it) },
+                    label = { Text("Wait time (seconds)") },
+                    isError = waitTimeInvalid,
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                        .fillMaxWidth()
+                        .onFocusChanged { if (!it.isFocused) viewModel.onWaitTimeFocusLost() },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = gracePeriodMinutesInput,
+                    onValueChange = { viewModel.onGracePeriodChanged(it) },
+                    label = { Text("Grace period (minutes)") },
+                    isError = gracePeriodInvalid,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { if (!it.isFocused) viewModel.onGracePeriodFocusLost() },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 24.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    items(restrictedAppsInfo, key = { it.packageName }) { appInfo ->
-                        val isExpanded = expandedAppPackage == appInfo.packageName
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant
-                            ),
-                            shape = MaterialTheme.shapes.medium
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { viewModel.onToggleExpanded(appInfo.packageName) }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    Text(
+                        text = "Restricted apps",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = onEditRestrictedApps) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Edit restricted apps")
+                    }
+                }
+                if (restrictedAppsInfo.isEmpty()) {
+                    Text(
+                        text = "No apps restricted",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 16.dp)
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(restrictedAppsInfo, key = { it.packageName }) { appInfo ->
+                            val isExpanded = expandedAppPackage == appInfo.packageName
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                ),
+                                shape = MaterialTheme.shapes.medium
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { viewModel.onToggleExpanded(appInfo.packageName) }
+                                        .padding(horizontal = 16.dp, vertical = 12.dp)
                                 ) {
-                                    AppIcon(
-                                        packageName = appInfo.packageName,
-                                        modifier = Modifier.size(40.dp)
-                                    )
-                                    Spacer(modifier = Modifier.size(12.dp))
-                                    Text(
-                                        text = appInfo.label,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    IconButton(
-                                        onClick = { viewModel.removeRestrictedApp(appInfo.packageName) }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        AppIcon(
+                                            packageName = appInfo.packageName,
+                                            modifier = Modifier.size(40.dp)
+                                        )
+                                        Spacer(modifier = Modifier.size(12.dp))
+                                        Text(
+                                            text = appInfo.label,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        IconButton(
+                                            onClick = { viewModel.removeRestrictedApp(appInfo.packageName) }
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Delete,
+                                                contentDescription = "Remove from restricted"
+                                            )
+                                        }
                                         Icon(
-                                            Icons.Filled.Delete,
-                                            contentDescription = "Remove from restricted"
+                                            imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                            contentDescription = if (isExpanded) "Collapse settings" else "Expand settings"
                                         )
                                     }
-                                    Icon(
-                                        imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                        contentDescription = if (isExpanded) "Collapse settings" else "Expand settings"
-                                    )
-                                }
-                                AnimatedVisibility(
-                                    visible = isExpanded,
-                                    enter = expandVertically(),
-                                    exit = shrinkVertically()
-                                ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(top = 8.dp)
+                                    AnimatedVisibility(
+                                        visible = isExpanded,
+                                        enter = expandVertically(),
+                                        exit = shrinkVertically()
                                     ) {
-                                        HorizontalDivider(
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Row(
+                                        Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(top = 12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
+                                                .padding(top = 8.dp)
                                         ) {
-                                            Text(
-                                                text = "Block again after grace",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                modifier = Modifier.weight(1f)
+                                            HorizontalDivider(
+                                                color = MaterialTheme.colorScheme.onSurface
                                             )
-                                            Switch(
-                                                checked = appInfo.reInterventionEnabled,
-                                                onCheckedChange = {
-                                                    viewModel.onReInterventionToggled(
-                                                        appInfo.packageName,
-                                                        it
-                                                    )
-                                                }
-                                            )
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(top = 12.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "Block again after grace",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Switch(
+                                                    checked = appInfo.reInterventionEnabled,
+                                                    onCheckedChange = {
+                                                        viewModel.onReInterventionToggled(
+                                                            appInfo.packageName,
+                                                            it
+                                                        )
+                                                    }
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -228,6 +256,15 @@ fun SettingsScreen(
                         }
                     }
                 }
+            }
+
+            if (showConfirmationScreen) {
+                SettingsConfirmationScreen(
+                    phase = confirmationPhase,
+                    progress = confirmationProgress,
+                    onCancel = viewModel::onConfirmationBack,
+                    onSave = viewModel::onConfirmationSave
+                )
             }
         }
     }

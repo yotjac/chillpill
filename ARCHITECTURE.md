@@ -115,8 +115,9 @@ com.chillpill/
     │   └── SetupViewModel.kt          Step state, permission tracking, advance logic
     ├── settings/
     │   ├── AppSelectionScreen.kt      Searchable list of installed apps with checkboxes
-    │   ├── SettingsScreen.kt          Wait time, grace period inputs, restricted apps list
-    │   └── SettingsViewModel.kt       Settings persistence, installed-app loading, search
+    │   ├── SettingsConfirmationScreen.kt  Waiting screen before saving restriction-reducing changes
+    │   ├── SettingsScreen.kt          Wait time, grace period inputs, restricted apps list, Save button
+    │   └── SettingsViewModel.kt       Draft state, deferred save, confirmation timer, installed-app loading
     ├── statistics/
     │   ├── StatisticsScreen.kt        Time-range selector, per-app bar charts
     │   └── StatisticsViewModel.kt     Bucket aggregation, 15-second auto-refresh
@@ -362,13 +363,17 @@ All in-app navigation happens via a single `NavHost` in `MainActivity`:
 |----------------|--------|---------|
 | `Routes.SETUP` | `SetupScreen` | 4-step onboarding (welcome → permissions → app selection → done) |
 | `Routes.HOME` | `HomeScreen` | Dashboard with today's stats, restricted apps, nav cards |
-| `Routes.SETTINGS` | `SettingsScreen` | Edit wait time, grace period, restricted apps list |
-| `Routes.APP_SELECTION` | `AppSelectionScreen` | Searchable installed-app list with checkboxes |
+| `Routes.SETTINGS_FLOW` | (nested graph) | Settings flow: shared ViewModel, deferred save |
+| ↳ `Routes.SETTINGS` | `SettingsScreen` | Edit wait time, grace period, restricted apps list; Save button |
+| ↳ `Routes.SETTINGS_APP_SELECTION` | `AppSelectionScreen` | Searchable installed-app list (draft, same ViewModel as Settings) |
+| `Routes.APP_SELECTION` | `AppSelectionScreen` | Standalone app selection (e.g. from Setup); auto-saves on change |
 | `Routes.STATISTICS` | `StatisticsScreen` | Bar charts by time range (week/month/3mo/year) |
+
+**Nested settings graph:** `SETTINGS_FLOW` is a nested navigation graph with start destination `SETTINGS`. Both `SettingsScreen` and the in-flow app selection screen scope their `SettingsViewModel` to the graph's back stack entry so draft state is shared; nothing is persisted until the user taps Save on the settings screen.
 
 **Start destination logic** (in `MainActivity`):
 - If `setupCompleted` is false → `SETUP`
-- If intent has `EXTRA_OPEN_SETTINGS` → `SETTINGS`
+- If intent has `EXTRA_OPEN_SETTINGS` → `SETTINGS_FLOW`
 - Otherwise → `HOME`
 
 **Transitions:** Horizontal slide, 300 ms.
@@ -393,8 +398,8 @@ service when a non-restricted app is used frequently. It is themed as a transluc
 |-----------|-----------------|------------------|
 | `HomeViewModel` | `permissionsOk`, `showUsageAccessBanner`, `restrictedPackages`, `todayAttempts`, `todayEntered` | Check a11y/usage-access permissions, load today's aggregate stats |
 | `SetupViewModel` | `currentStep` (0–3), `accessibilityGranted`, `usageAccessGranted`, `restrictedPackages`, `canAdvance` | Drive 4-step onboarding, validate each step before advancing |
-| `SettingsViewModel` | `waitTimeSecondsInput`, `gracePeriodMinutesInput`, `restrictedAppsInfo`, `installedApps`, `appSearchQuery` | Persist settings, load/sort installed apps (by usage stats), filter search |
-| `SettingsViewModel` (extended) | `expandedAppPackage`, `reInterventionDisabledPackages` | Track which restricted app card is expanded and which apps have re-intervention disabled |
+| `SettingsViewModel` | `waitTimeSecondsInput`, `gracePeriodMinutesInput`, `restrictedAppsInfo`, `installedApps`, `appSearchQuery`, `hasChanges`, `showConfirmationScreen`, `confirmationProgress`, `confirmationPhase` | Draft-only state (when `draftOnly=true`); load/sort installed apps; persist only on Save; run confirmation timer when saving restriction-reducing changes |
+| `SettingsViewModel` (extended) | `expandedAppPackage`, `reInterventionDisabledPackages` | Track which restricted app card is expanded and which apps have re-intervention disabled. When `draftOnly=false` (e.g. Setup flow's app selection), restricted-app changes persist immediately. |
 | `StatisticsViewModel` | `selectedRange`, `stats: List<AppStatistic>`, `isLoading`, `focusedSeries` | Aggregate daily stats into buckets, auto-refresh every 15 s, legend focus |
 | `AppBlockViewModel` | `phase` (WAITING/COMPLETED), `progress` (0→1), `openCount24h` | Run wait countdown, emit one-shot events (`RequestFinish`, `RequestGoHome`) via Channel |
 
@@ -403,9 +408,11 @@ All ViewModels expose state via `StateFlow` and screens collect it with
 
 ### 7.3 Settings UI Details
 
-- The **Restricted apps** section on `SettingsScreen` shows each restricted app as an expandable `Card` with the app icon, label, and an always-visible delete icon in the header row.
+- **Deferred save:** Settings are not written to DataStore until the user taps **Save**. A **Save** button in the top bar (left, after the back arrow) is disabled when there are no changes and enabled when any draft change exists (wait time, grace period, restricted apps, or re-intervention toggles).
+- **Restriction-reducing confirmation:** When the user taps Save, if the draft would *reduce* restrictions (grace period increased, wait time decreased, or any restricted app removed), a **settings confirmation screen** is shown instead of persisting immediately. It reuses the re-intervention visual style (black background, animated surface fill from bottom, centered message: "Take a breath before reducing your restrictions…"). The top button is **"back"** (dismiss confirmation, stay on settings); the bottom button **"save changes"** appears only after the current (persisted) wait-time countdown completes. **Back** cancels the confirmation; **save changes** persists and closes the confirmation.
+- **Restricted apps** section on `SettingsScreen` shows each restricted app as an expandable `Card` with the app icon, label, and an always-visible delete icon in the header row.
 - The entire card header is tappable and includes a chevron icon to indicate that it can expand for additional settings; only one app card is expanded at a time.
-- Expanding a card reveals a single toggle labeled **"Block again after grace"**, which controls whether re-intervention is enabled for that specific app.
+- Expanding a card reveals a single toggle labeled **"Block again after grace"**, which controls whether re-intervention is enabled for that specific app (draft only until Save).
 - A horizontal divider between the header and expanded area uses the theme's `onSurface` color so it appears as a high-contrast white/black line depending on light or dark mode.
 
 ### 7.4 Theme
@@ -488,7 +495,7 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
 
 | Path | Contents |
 |------|----------|
-| `res/values/strings.xml` | App name, block-screen messages, suggestion-popup messages, accessibility service description |
+| `res/values/strings.xml` | App name, block-screen messages, suggestion-popup messages, settings confirmation screen (message, back, save changes), accessibility service description |
 | `res/values/colors.xml` | Color definitions |
 | `res/values/themes.xml` | `Theme.Chillpill` (main), `Theme.Chillpill.Block` (block screen), `Theme.Chillpill.Dialog` (translucent suggestion popup) |
 | `res/drawable/block_activity_background.jpg` | Block-screen background image |

@@ -8,11 +8,19 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.chillpill.ChillpillApp
+import com.chillpill.ui.appblock.AppBlockPhase
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -28,11 +36,20 @@ private const val MIN_WAIT_SECONDS = 1
 private const val MAX_WAIT_SECONDS = 7200  // 2 hours
 private const val MIN_GRACE_MINUTES = 1
 private const val MAX_GRACE_MINUTES = 1440  // 24 hours
+private const val CONFIRMATION_TICK_MS = 100L
 
 class SettingsViewModel(
-    private val app: ChillpillApp
+    private val app: ChillpillApp,
+    private val draftOnly: Boolean = true
 ) : ViewModel() {
 
+    // Original (persisted) state - loaded once on init
+    private var originalWaitTimeSeconds: Int = DEFAULT_WAIT_SECONDS
+    private var originalGracePeriodMinutes: Int = DEFAULT_GRACE_MINUTES
+    private var originalRestrictedPackages: Set<String> = emptySet()
+    private var originalReInterventionDisabled: Set<String> = emptySet()
+
+    // Draft state (user edits, not persisted until Save)
     private val _waitTimeSecondsInput = MutableStateFlow("")
     val waitTimeSecondsInput: StateFlow<String> = _waitTimeSecondsInput.asStateFlow()
 
@@ -57,25 +74,52 @@ class SettingsViewModel(
     private val _appSearchQuery = MutableStateFlow("")
     val appSearchQuery: StateFlow<String> = _appSearchQuery.asStateFlow()
 
+    val hasChanges: StateFlow<Boolean> = combine(
+        _waitTimeSecondsInput,
+        _gracePeriodMinutesInput,
+        _restrictedPackages,
+        _reInterventionDisabledPackages
+    ) { waitInput, graceInput, restricted, reInterventionDisabled ->
+        val waitDraft = waitInput.toIntOrNull()?.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS) ?: originalWaitTimeSeconds
+        val graceDraft = graceInput.toIntOrNull()?.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES) ?: originalGracePeriodMinutes
+        waitDraft != originalWaitTimeSeconds ||
+            graceDraft != originalGracePeriodMinutes ||
+            restricted != originalRestrictedPackages ||
+            reInterventionDisabled != originalReInterventionDisabled
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    // Confirmation screen state (when saving would reduce restrictions)
+    private val _showConfirmationScreen = MutableStateFlow(false)
+    val showConfirmationScreen: StateFlow<Boolean> = _showConfirmationScreen.asStateFlow()
+
+    private val _confirmationProgress = MutableStateFlow(0f)
+    val confirmationProgress: StateFlow<Float> = _confirmationProgress.asStateFlow()
+
+    private val _confirmationPhase = MutableStateFlow(AppBlockPhase.WAITING)
+    val confirmationPhase: StateFlow<AppBlockPhase> = _confirmationPhase.asStateFlow()
+
+    private var confirmationTimerJob: Job? = null
+
+    private val _saveCompletedEvent = Channel<Unit>(Channel.BUFFERED)
+    val saveCompletedEvent = _saveCompletedEvent.receiveAsFlow()
+
     init {
         viewModelScope.launch {
-            app.settingsRepository.settings.first().let { settings ->
-                _waitTimeSecondsInput.value = settings.waitTimeSeconds.toString()
-                _gracePeriodMinutesInput.value = settings.gracePeriodMinutes.toString()
-            }
+            val settings = app.settingsRepository.settings.first()
+            originalWaitTimeSeconds = settings.waitTimeSeconds
+            originalGracePeriodMinutes = settings.gracePeriodMinutes
+            _waitTimeSecondsInput.value = settings.waitTimeSeconds.toString()
+            _gracePeriodMinutesInput.value = settings.gracePeriodMinutes.toString()
         }
         viewModelScope.launch {
-            app.restrictedAppsRepository.restrictedPackages.collect { set ->
-                _restrictedPackages.value = set
-                loadRestrictedAppsInfo()
-                loadInstalledApps()
-            }
-        }
-        viewModelScope.launch {
-            app.restrictedAppsRepository.reInterventionDisabledPackages.collect { set ->
-                _reInterventionDisabledPackages.value = set
-                loadRestrictedAppsInfo()
-            }
+            val restricted = app.restrictedAppsRepository.restrictedPackages.first()
+            val reInterventionDisabled = app.restrictedAppsRepository.reInterventionDisabledPackages.first()
+            originalRestrictedPackages = restricted
+            originalReInterventionDisabled = reInterventionDisabled
+            _restrictedPackages.value = restricted
+            _reInterventionDisabledPackages.value = reInterventionDisabled
+            loadRestrictedAppsInfo()
+            loadInstalledApps()
         }
     }
 
@@ -108,7 +152,7 @@ class SettingsViewModel(
             val apps = withContext(Dispatchers.IO) {
                 val pm = app.packageManager
                 val chillpillPackage = app.packageName
-                val restrictedSet = app.restrictedAppsRepository.restrictedPackages.first()
+                val restrictedSet = _restrictedPackages.value
 
                 val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
                 @Suppress("DEPRECATION")
@@ -168,10 +212,7 @@ class SettingsViewModel(
         _waitTimeSecondsInput.value = digitsOnly
         val n = digitsOnly.toIntOrNull() ?: return
         val clamped = n.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS)
-        viewModelScope.launch {
-            app.settingsRepository.setWaitTimeSeconds(clamped)
-            if (clamped != n) _waitTimeSecondsInput.value = clamped.toString()
-        }
+        if (clamped != n) _waitTimeSecondsInput.value = clamped.toString()
     }
 
     fun onGracePeriodChanged(s: String) {
@@ -179,10 +220,7 @@ class SettingsViewModel(
         _gracePeriodMinutesInput.value = digitsOnly
         val n = digitsOnly.toIntOrNull() ?: return
         val clamped = n.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES)
-        viewModelScope.launch {
-            app.settingsRepository.setGracePeriodMinutes(clamped)
-            if (clamped != n) _gracePeriodMinutesInput.value = clamped.toString()
-        }
+        if (clamped != n) _gracePeriodMinutesInput.value = clamped.toString()
     }
 
     fun onRestrictedChanged(packageName: String, selected: Boolean) {
@@ -196,19 +234,21 @@ class SettingsViewModel(
                     _reInterventionDisabledPackages.value - packageName
             }
         }
-        viewModelScope.launch {
-            app.restrictedAppsRepository.setRestricted(_restrictedPackages.value)
-            app.restrictedAppsRepository.setReInterventionDisabled(_reInterventionDisabledPackages.value)
+        if (!draftOnly) {
+            viewModelScope.launch {
+                app.restrictedAppsRepository.setRestricted(_restrictedPackages.value)
+                app.restrictedAppsRepository.setReInterventionDisabled(_reInterventionDisabledPackages.value)
+            }
         }
         loadRestrictedAppsInfo()
+        loadInstalledApps()
     }
 
     fun removeRestrictedApp(packageName: String) {
         _restrictedPackages.value = _restrictedPackages.value - packageName
-        viewModelScope.launch {
-            app.restrictedAppsRepository.setRestricted(_restrictedPackages.value)
-        }
+        _reInterventionDisabledPackages.value = _reInterventionDisabledPackages.value - packageName
         loadRestrictedAppsInfo()
+        loadInstalledApps()
     }
 
     fun onReInterventionToggled(packageName: String, enabled: Boolean) {
@@ -216,9 +256,6 @@ class SettingsViewModel(
             _reInterventionDisabledPackages.value - packageName
         } else {
             _reInterventionDisabledPackages.value + packageName
-        }
-        viewModelScope.launch {
-            app.restrictedAppsRepository.setReInterventionDisabled(_reInterventionDisabledPackages.value)
         }
         loadRestrictedAppsInfo()
     }
@@ -235,20 +272,17 @@ class SettingsViewModel(
         _appSearchQuery.value = query
     }
 
-    /** Call when focus leaves a config field to commit or reset invalid values. */
+    /** Call when focus leaves a config field to validate/reset invalid values (draft only, no persist). */
     fun onWaitTimeFocusLost() {
         val s = _waitTimeSecondsInput.value
         if (s.isEmpty()) {
             _waitTimeSecondsInput.value = DEFAULT_WAIT_SECONDS.toString()
-            viewModelScope.launch { app.settingsRepository.setWaitTimeSeconds(DEFAULT_WAIT_SECONDS) }
         } else {
             val n = s.toIntOrNull()
             if (n == null || n < MIN_WAIT_SECONDS) {
                 _waitTimeSecondsInput.value = DEFAULT_WAIT_SECONDS.toString()
-                viewModelScope.launch { app.settingsRepository.setWaitTimeSeconds(DEFAULT_WAIT_SECONDS) }
             } else if (n > MAX_WAIT_SECONDS) {
                 _waitTimeSecondsInput.value = MAX_WAIT_SECONDS.toString()
-                viewModelScope.launch { app.settingsRepository.setWaitTimeSeconds(MAX_WAIT_SECONDS) }
             }
         }
     }
@@ -257,23 +291,112 @@ class SettingsViewModel(
         val s = _gracePeriodMinutesInput.value
         if (s.isEmpty()) {
             _gracePeriodMinutesInput.value = DEFAULT_GRACE_MINUTES.toString()
-            viewModelScope.launch { app.settingsRepository.setGracePeriodMinutes(DEFAULT_GRACE_MINUTES) }
         } else {
             val n = s.toIntOrNull()
             if (n == null || n < MIN_GRACE_MINUTES) {
                 _gracePeriodMinutesInput.value = DEFAULT_GRACE_MINUTES.toString()
-                viewModelScope.launch { app.settingsRepository.setGracePeriodMinutes(DEFAULT_GRACE_MINUTES) }
             } else if (n > MAX_GRACE_MINUTES) {
                 _gracePeriodMinutesInput.value = MAX_GRACE_MINUTES.toString()
-                viewModelScope.launch { app.settingsRepository.setGracePeriodMinutes(MAX_GRACE_MINUTES) }
             }
         }
     }
 
-    class Factory(private val app: ChillpillApp) : ViewModelProvider.Factory {
+    private fun getDraftWaitTimeSeconds(): Int {
+        return _waitTimeSecondsInput.value.toIntOrNull()
+            ?.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS) ?: originalWaitTimeSeconds
+    }
+
+    private fun getDraftGracePeriodMinutes(): Int {
+        return _gracePeriodMinutesInput.value.toIntOrNull()
+            ?.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES) ?: originalGracePeriodMinutes
+    }
+
+    /**
+     * True if the draft changes would reduce restrictions:
+     * - grace period increased, or
+     * - wait time decreased, or
+     * - any restricted app removed
+     */
+    private fun isRestrictionReducing(): Boolean {
+        val waitDraft = getDraftWaitTimeSeconds()
+        val graceDraft = getDraftGracePeriodMinutes()
+        val restrictedDraft = _restrictedPackages.value
+        if (graceDraft > originalGracePeriodMinutes) return true
+        if (waitDraft < originalWaitTimeSeconds) return true
+        if (restrictedDraft.size < originalRestrictedPackages.size ||
+            !originalRestrictedPackages.all { it in restrictedDraft }) return true
+        return false
+    }
+
+    fun onSaveClicked() {
+        if (isRestrictionReducing()) {
+            _showConfirmationScreen.value = true
+            _confirmationProgress.value = 0f
+            _confirmationPhase.value = AppBlockPhase.WAITING
+            confirmationTimerJob?.cancel()
+            confirmationTimerJob = viewModelScope.launch {
+                val waitTimeSeconds = originalWaitTimeSeconds.coerceAtLeast(1)
+                val totalMs = waitTimeSeconds * 1000L
+                var elapsedMs = 0L
+                while (elapsedMs < totalMs) {
+                    delay(CONFIRMATION_TICK_MS)
+                    elapsedMs += CONFIRMATION_TICK_MS
+                    _confirmationProgress.value = (elapsedMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                }
+                _confirmationProgress.value = 1f
+                _confirmationPhase.value = AppBlockPhase.COMPLETED
+            }
+        } else {
+            saveChanges()
+        }
+    }
+
+    /** Called from confirmation screen when user taps "save changes" (after timer). */
+    fun onConfirmationSave() {
+        confirmationTimerJob?.cancel()
+        confirmationTimerJob = null
+        saveChanges()
+    }
+
+    /** Called from confirmation screen when user taps "back". */
+    fun onConfirmationBack() {
+        confirmationTimerJob?.cancel()
+        confirmationTimerJob = null
+        _showConfirmationScreen.value = false
+        _confirmationProgress.value = 0f
+        _confirmationPhase.value = AppBlockPhase.WAITING
+    }
+
+    private fun saveChanges() {
+        viewModelScope.launch {
+            val waitSeconds = getDraftWaitTimeSeconds()
+            val graceMinutes = getDraftGracePeriodMinutes()
+            val restricted = _restrictedPackages.value
+            val reInterventionDisabled = _reInterventionDisabledPackages.value
+            withContext(Dispatchers.IO) {
+                app.settingsRepository.setWaitTimeSeconds(waitSeconds)
+                app.settingsRepository.setGracePeriodMinutes(graceMinutes)
+                app.restrictedAppsRepository.setRestricted(restricted)
+                app.restrictedAppsRepository.setReInterventionDisabled(reInterventionDisabled)
+            }
+            originalWaitTimeSeconds = waitSeconds
+            originalGracePeriodMinutes = graceMinutes
+            originalRestrictedPackages = restricted
+            originalReInterventionDisabled = reInterventionDisabled
+            _showConfirmationScreen.value = false
+            _confirmationProgress.value = 0f
+            _confirmationPhase.value = AppBlockPhase.WAITING
+            _saveCompletedEvent.send(Unit)
+        }
+    }
+
+    class Factory(
+        private val app: ChillpillApp,
+        private val draftOnly: Boolean = true
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return SettingsViewModel(app) as T
+            return SettingsViewModel(app, draftOnly) as T
         }
     }
 }

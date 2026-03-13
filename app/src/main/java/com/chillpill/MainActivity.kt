@@ -27,7 +27,7 @@ class MainActivity : ComponentActivity() {
         val openSettingsOnLaunch = intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS, false) == true
         if (openSettingsOnLaunch) intent?.removeExtra(EXTRA_OPEN_SETTINGS)
         val startDestination = when {
-            openSettingsOnLaunch -> Routes.SETTINGS
+            openSettingsOnLaunch -> Routes.SETTINGS_FLOW
             else -> runBlocking {
                 if (app.settingsRepository.setupCompleted.first()) Routes.HOME else Routes.SETUP
             }
