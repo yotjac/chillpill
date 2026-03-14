@@ -78,7 +78,7 @@ object ExcludedApps {
         "com.android.launcher",
 
         // Own package (ChillPill itself)
-        "com.chillpill"
+        "com.chillpillapp"
     )
 }
 

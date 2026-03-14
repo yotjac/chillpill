@@ -59,7 +59,7 @@ fun SettingsConfirmationScreen(
         label = "settingsConfirmationOverlayProgress"
     )
 
-    val scrimColor = Color.Black.copy(alpha = 0.7f)
+    val scrimColor = Color.Black.copy(alpha = 0.8f)
 
     Box(
         modifier = modifier
