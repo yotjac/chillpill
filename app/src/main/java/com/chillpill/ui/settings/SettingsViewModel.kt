@@ -81,19 +81,28 @@ class SettingsViewModel(
     val appSearchQuery: StateFlow<String> = _appSearchQuery.asStateFlow()
 
     val hasChanges: StateFlow<Boolean> = combine(
-        _waitTimeSecondsInput,
-        _gracePeriodMinutesInput,
-        _restrictedPackages,
-        _reInterventionDisabledPackages,
-        _originalReInterventionDisabledPackages
-    ) { waitInput, graceInput, restricted, reInterventionDisabled, origReInterventionDisabled ->
-        val origWait = _originalWaitTimeSeconds.value
-        val origGrace = _originalGracePeriodMinutes.value
+        combine(
+            combine(_waitTimeSecondsInput, _gracePeriodMinutesInput) { w, g -> w to g },
+            combine(_restrictedPackages, _reInterventionDisabledPackages) { r, rid -> r to rid }
+        ) { wg, rr ->
+            wg to rr
+        },
+        combine(
+            combine(_originalReInterventionDisabledPackages, _originalWaitTimeSeconds) { o, ow -> o to ow },
+            combine(_originalGracePeriodMinutes, _originalRestrictedPackages) { og, orp -> og to orp }
+        ) { oow, gorp ->
+            oow to gorp
+        }
+    ) { drafts, originals ->
+        val (waitInput, graceInput) = drafts.first
+        val (restricted, reInterventionDisabled) = drafts.second
+        val (origReInterventionDisabled, origWait) = originals.first
+        val (origGrace, origRestricted) = originals.second
         val waitDraft = waitInput.toIntOrNull()?.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS) ?: origWait
         val graceDraft = graceInput.toIntOrNull()?.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES) ?: origGrace
         waitDraft != origWait ||
             graceDraft != origGrace ||
-            restricted != _originalRestrictedPackages.value ||
+            restricted != origRestricted ||
             reInterventionDisabled != origReInterventionDisabled
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
