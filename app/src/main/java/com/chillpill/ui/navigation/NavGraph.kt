@@ -103,8 +103,7 @@ fun ChillpillNavHost(
                 SettingsScreen(
                     viewModel = settingsViewModel,
                     onBack = { navController.popBackStack() },
-                    onEditRestrictedApps = { navController.navigate(Routes.SETTINGS_APP_SELECTION) },
-                    onNavigateHome = { navController.popBackStack(Routes.HOME, inclusive = false) }
+                    onEditRestrictedApps = { navController.navigate(Routes.SETTINGS_APP_SELECTION) }
                 )
             }
             composable(

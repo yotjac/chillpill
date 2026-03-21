@@ -218,7 +218,7 @@ private fun PermissionsStep(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AccessibilityPermissionCard(
-    granted: Boolean,
+    granted: Boolean,   
     onEnableClick: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }

@@ -12,14 +12,12 @@ import com.chillpill.ui.appblock.AppBlockPhase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,7 +51,9 @@ class SettingsViewModel(
     private val _originalRestrictedPackages = MutableStateFlow<Set<String>>(emptySet())
     val originalRestrictedPackages: StateFlow<Set<String>> = _originalRestrictedPackages.asStateFlow()
 
-    private var originalReInterventionDisabled: Set<String> = emptySet()
+    private val _originalReInterventionDisabledPackages = MutableStateFlow<Set<String>>(emptySet())
+    val originalReInterventionDisabledPackages: StateFlow<Set<String>> =
+        _originalReInterventionDisabledPackages.asStateFlow()
 
     // Draft state (user edits, not persisted until Save)
     private val _waitTimeSecondsInput = MutableStateFlow("")
@@ -84,8 +84,9 @@ class SettingsViewModel(
         _waitTimeSecondsInput,
         _gracePeriodMinutesInput,
         _restrictedPackages,
-        _reInterventionDisabledPackages
-    ) { waitInput, graceInput, restricted, reInterventionDisabled ->
+        _reInterventionDisabledPackages,
+        _originalReInterventionDisabledPackages
+    ) { waitInput, graceInput, restricted, reInterventionDisabled, origReInterventionDisabled ->
         val origWait = _originalWaitTimeSeconds.value
         val origGrace = _originalGracePeriodMinutes.value
         val waitDraft = waitInput.toIntOrNull()?.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS) ?: origWait
@@ -93,7 +94,7 @@ class SettingsViewModel(
         waitDraft != origWait ||
             graceDraft != origGrace ||
             restricted != _originalRestrictedPackages.value ||
-            reInterventionDisabled != originalReInterventionDisabled
+            reInterventionDisabled != origReInterventionDisabled
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     // Confirmation screen state (when saving would reduce restrictions)
@@ -108,9 +109,6 @@ class SettingsViewModel(
 
     private var confirmationTimerJob: Job? = null
 
-    private val _saveCompletedEvent = Channel<Unit>(Channel.BUFFERED)
-    val saveCompletedEvent = _saveCompletedEvent.receiveAsFlow()
-
     init {
         viewModelScope.launch {
             val settings = app.settingsRepository.settings.first()
@@ -123,7 +121,7 @@ class SettingsViewModel(
             val restricted = app.restrictedAppsRepository.restrictedPackages.first()
             val reInterventionDisabled = app.restrictedAppsRepository.reInterventionDisabledPackages.first()
             _originalRestrictedPackages.value = restricted
-            originalReInterventionDisabled = reInterventionDisabled
+            _originalReInterventionDisabledPackages.value = reInterventionDisabled
             _restrictedPackages.value = restricted
             _reInterventionDisabledPackages.value = reInterventionDisabled
             loadRestrictedAppsInfo()
@@ -390,11 +388,10 @@ class SettingsViewModel(
             _originalWaitTimeSeconds.value = waitSeconds
             _originalGracePeriodMinutes.value = graceMinutes
             _originalRestrictedPackages.value = restricted
-            originalReInterventionDisabled = reInterventionDisabled
+            _originalReInterventionDisabledPackages.value = reInterventionDisabled
             _showConfirmationScreen.value = false
             _confirmationProgress.value = 0f
             _confirmationPhase.value = AppBlockPhase.WAITING
-            _saveCompletedEvent.send(Unit)
         }
     }
 

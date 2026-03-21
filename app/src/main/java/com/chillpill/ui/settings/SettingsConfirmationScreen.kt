@@ -60,7 +60,7 @@ fun SettingsConfirmationScreen(
         label = "settingsConfirmationOverlayProgress"
     )
 
-    val scrimColor = Color.Black.copy(alpha = 0.8f)
+    val scrimColor = Color.Black.copy(alpha = 0.9f)
 
     Box(
         modifier = modifier
@@ -128,8 +128,7 @@ fun SettingsConfirmationScreen(
                     onClick = onSave,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
-                        .alpha(if (showSave) 1f else 0f),
+                        .height(56.dp),
                     shape = MaterialTheme.shapes.large,
                     enabled = showSave
                 ) {
