@@ -72,7 +72,6 @@ com.chillpill/
 ├── ChillpillSettingsActivity.kt       Trampoline: opens MainActivity at the Settings route
 ├── AppBlockActivity.kt                Hosts block-screen Compose UI (separate from NavHost)
 ├── ReInterventionActivity.kt          Hosts re-intervention screen (separate Activity, distinct UI)
-├── SuggestRestrictionActivity.kt      Hosts suggestion-popup Compose dialog (separate task)
 │
 ├── data/
 │   ├── blockstate/
@@ -95,6 +94,7 @@ com.chillpill/
 ├── service/
 │   ├── BlockingSharedState.kt         In-memory singleton shared between services
 │   ├── ChillpillAccessibilityService.kt  Detects app launches; blocks restricted apps, suggests non-restricted
+│   ├── SuggestionOverlayManager.kt     Hosts suggestion-popup via TYPE_ACCESSIBILITY_OVERLAY
 │   └── GracePeriodService.kt          Foreground service that counts down the grace timer
 │
 └── ui/
@@ -273,7 +273,7 @@ An `object` that coordinates between the accessibility service and the grace-per
 |-------|------|---------|
 | `currentForegroundPackage` | `String?` | Last foreground package set by the a11y service |
 | `graceValidUntilMillis` | `MutableMap<String, Long>` | Per-package grace expiry timestamp |
-| `graceExpiredForPackage` | `String?` | Package whose grace expired while user was away |
+| `graceExpiredForPackage` | `String?` | Package whose grace expired while user was away; cleared when they open that app again (they then see the regular block screen) |
 
 Key methods: `isInGracePeriod(pkg)`, `setGraceValidUntil(pkg, millis)`,
 `clearGraceForPackage(pkg)`, `setGraceExpiredForPackage(pkg)`.
@@ -284,14 +284,14 @@ Key methods: `isInGracePeriod(pkg)`, `setGraceValidUntil(pkg, millis)`,
 - Maintains a single-threaded coroutine scope (`Dispatchers.Default.limitedParallelism(1)`)
 - Decision flow on detecting a foreground change:
   1. If package **is** restricted:
-     a. If `graceExpiredForPackage` matches → **re-intervention** (start `ReInterventionActivity`)
+     a. If `graceExpiredForPackage` matches → clear the flag (user is returning after grace expired while away); then fall through so they see the **regular block** screen, not re-intervention
      b. If package is in grace period → allow
      c. Otherwise → record `OPEN_ATTEMPT`, start `AppBlockActivity`
   2. If package is **not** restricted → `handleNonRestrictedApp`:
      a. Skip if in `ExcludedApps.EXCLUDED_PACKAGES`
      b. Skip if the package has no launcher activity (`getLaunchIntentForPackage == null`)
-     c. If not already suggested this session, query **UsageStatsManager** for foreground time of this package in the last 12 h; if ≥20 min, not ignored, not permanently excluded → launch `SuggestRestrictionActivity`
-- **Self-package event filtering:** Events from the app's own package (e.g. when `AppBlockActivity`, `ReInterventionActivity`, or `SuggestRestrictionActivity` is shown) are handled before dispatching to `processEvent`: only `BlockingSharedState.currentForegroundPackage` is updated; `previousForegroundPackage` is left unchanged. This prevents the block screen from "resetting" the same-app guard, so when the restricted app fires a second `TYPE_WINDOW_STATE_CHANGED` during launch (e.g. splash-to-main transition), the service correctly treats it as the same app and does not show the block screen again. When the user taps "Go Home" from the block screen, `recordLeavingRestrictedApp` skips granting grace if `currentForegroundPackage` is the app's own package (user did not voluntarily leave the restricted app).
+     c. If not already suggested this session, query **UsageStatsManager** for foreground time of this package in the last 12 h; if ≥20 min, not ignored, not permanently excluded → show suggestion via `SuggestionOverlayManager`
+- **Self-package event filtering:** Events from the app's own package (e.g. when `AppBlockActivity` / `ReInterventionActivity` is shown, or when the suggestion overlay is visible) are handled before dispatching to `processEvent`: only `BlockingSharedState.currentForegroundPackage` is updated; `previousForegroundPackage` is left unchanged. This prevents the block screen from "resetting" the same-app guard, so when the restricted app fires a second `TYPE_WINDOW_STATE_CHANGED` during launch (e.g. splash-to-main transition), the service correctly treats it as the same app and does not show the block screen again. When the user taps "Go Home" from the block screen, `recordLeavingRestrictedApp` skips granting grace if `currentForegroundPackage` is the app's own package (user did not voluntarily leave the restricted app).
 - Starts `GracePeriodService` when the user taps "Continue" on the block screen, or when the user taps "Restrict App" in the suggestion popup (so they can continue into the app without seeing the block screen that first time).
 
 ### 6.3 GracePeriodService (Foreground Service)
@@ -299,8 +299,8 @@ Key methods: `isInGracePeriod(pkg)`, `setGraceValidUntil(pkg, millis)`,
 - Started by `AppBlockActivity` or `ReInterventionActivity` when the user taps "Continue" (initial block or re-intervention). This guarantees the grace timer runs after every block dismissal.
 - Shows an ongoing notification with a countdown
 - On expiry, determines whether the user is still in the restricted app via **UsageStatsManager** (`queryEvents` over the last 10 minutes to capture the most recent `ACTIVITY_RESUMED` event), falling back to `BlockingSharedState.currentForegroundPackage` if usage-stats query fails:
-  - If user is still in the restricted app → records `GRACE_EXPIRED_WHILE_ACTIVE`, starts `ReInterventionActivity`
-  - If user navigated away → records `GRACE_EXPIRED_WHILE_AWAY`, sets `BlockingSharedState.graceExpiredForPackage`
+  - If user is still in the restricted app → records `GRACE_EXPIRED_WHILE_ACTIVE`, starts `ReInterventionActivity` (re-intervention **only** happens at this moment)
+  - If user navigated away → records `GRACE_EXPIRED_WHILE_AWAY`, sets `BlockingSharedState.graceExpiredForPackage`; when they later open that app again, the accessibility service clears the flag and shows the **regular** block screen
 - Uses `serviceScope` on `Dispatchers.Main.immediate`
 
 ### Service ↔ Activity Data Flow
@@ -312,12 +312,13 @@ User opens restricted app
         │
         ▼
 ChillpillAccessibilityService
-   ├── Records OPEN_ATTEMPT in UsageEventsRepository
-   ├── Starts AppBlockActivity (initial) or ReInterventionActivity (re-intervention), with package name
+   ├── If graceExpiredForPackage == pkg: clear flag (user returning after grace expired while away)
+   ├── If in grace period: allow
+   ├── Else: record OPEN_ATTEMPT, start AppBlockActivity (never ReInterventionActivity from here)
    └── Updates BlockingSharedState.currentForegroundPackage
         │
         ▼
-AppBlockActivity / AppBlockViewModel  (initial block)  OR  ReInterventionActivity / AppBlockViewModel  (re-intervention)
+AppBlockActivity / AppBlockViewModel  (initial block only from a11y service)
    ├── Runs wait timer (from SettingsRepository.waitTimeSeconds)
    ├── On "Continue": records WAIT_COMPLETED, sets grace in BlockingSharedState,
    │   starts GracePeriodService, launches target app, finishes
@@ -328,7 +329,8 @@ GracePeriodService
    ├── Reads grace duration from SettingsRepository
    ├── Shows notification countdown
    └── On expiry: queries UsageStatsManager for actual foreground app;
-       starts ReInterventionActivity (user still in app) or marks graceExpiredForPackage (user left)
+       if user still in app → start ReInterventionActivity (only place re-intervention is shown);
+       if user left → record GRACE_EXPIRED_WHILE_AWAY, set graceExpiredForPackage (next open gets regular block)
 ```
 
 #### Suggestion flow (non-restricted apps)
@@ -341,14 +343,14 @@ ChillpillAccessibilityService.handleNonRestrictedApp()
    ├── Checks: not in ExcludedApps, has launcher activity,
    │   foreground time (UsageStatsManager) ≥ 20 min in last 12 h,
    │   not already suggested this session, not ignored/permanently excluded
-   └── Starts SuggestRestrictionActivity (in its own task)
+   └── Shows suggestion via SuggestionOverlayManager (accessibility overlay)
         │
         ▼
-SuggestRestrictionActivity (dialog overlay, intercepted app visible behind it)
+Suggestion overlay (accessibility overlay, intercepted app visible behind it)
    ├── "Restrict App"    → adds pkg to RestrictedAppsRepository, sets grace in BlockingSharedState,
-   │   starts GracePeriodService, clears tracker state, finishes (user continues into app; no block screen this time)
-   ├── "Ignore (7 days)" → calls SuggestionRepository.ignoreForOneWeek(pkg), finishes
-   └── "Never ask again about [app]" → calls SuggestionRepository.addPermanentlyExcluded(pkg), finishes
+   │   starts GracePeriodService, clears tracker state, dismisses overlay (user continues into app; no block screen this time)
+   ├── "Ignore (7 days)" → calls SuggestionRepository.markIgnored(pkg), clears tracker state, dismisses overlay
+   └── "Never ask again about [app]" → calls SuggestionRepository.addPermanentlyExcluded(pkg), clears tracker state, dismisses overlay
 ```
 
 ---
@@ -387,10 +389,9 @@ animated fill background, large centered text with the app name in cyan ("still 
 "Go back home" button visible from the start, and "Keep using the app" button appearing when the wait ends. It reuses
 `AppBlockViewModel` for timer and event logic.
 
-`SuggestRestrictionActivity` is another **separate Activity** launched by the accessibility
-service when a non-restricted app is used frequently. It is themed as a translucent dialog
-(`Theme.Chillpill.Dialog`) and runs in its own task (`taskAffinity=""`,
-`excludeFromRecents="true"`) so the intercepted app remains visible behind the popup.
+The **suggestion popup** is shown as an accessibility overlay via `SuggestionOverlayManager`
+(`TYPE_ACCESSIBILITY_OVERLAY`), so the intercepted app remains visible behind the overlay and
+the popup can't be displaced by the target app's rapid activity/window changes.
 
 ### 7.2 ViewModel Summary
 
@@ -444,7 +445,6 @@ All ViewModels expose state via `StateFlow` and screens collect it with
 | `ChillpillSettingsActivity` | Activity | Yes | Accessibility settings trampoline |
 | `AppBlockActivity` | Activity | No | Block screen (initial) |
 | `ReInterventionActivity` | Activity | No | Re-intervention screen (distinct UI, same wait/grace logic) |
-| `SuggestRestrictionActivity` | Activity | No | Suggestion popup dialog (`taskAffinity=""`, `excludeFromRecents`) |
 | `ChillpillAccessibilityService` | Service | No | App-launch detection via a11y |
 | `GracePeriodService` | Service | No | Grace-period foreground timer |
 
@@ -483,8 +483,8 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
 8. **Separate Activity for block screen** — `AppBlockActivity` is launched outside the
    NavHost by the accessibility service for the initial block so it can overlay any app.
    Re-intervention uses a dedicated `ReInterventionActivity` with distinct UI (animated fill, cyan app name, different button visibility).
-9. **Separate Activity for suggestion dialog** — `SuggestRestrictionActivity` runs in its
-   own task so the intercepted app stays visible behind the translucent dialog.
+9. **Accessibility overlay for suggestion dialog** — `SuggestionOverlayManager` shows the
+   suggestion via `TYPE_ACCESSIBILITY_OVERLAY` so it can't be displaced by the target app.
 10. **In-memory tracker + DataStore persistence for suggestions** — `AppOpenTracker`
    tracks which packages have had the suggestion shown this session (deduplication);
    `SuggestionRepository` persists user choices (7-day ignore and permanent exclusion) across restarts.
@@ -497,7 +497,7 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
 |------|----------|
 | `res/values/strings.xml` | App name, block-screen messages, suggestion-popup messages, settings confirmation screen (message, back, save changes), accessibility service description |
 | `res/values/colors.xml` | Color definitions |
-| `res/values/themes.xml` | `Theme.Chillpill` (main), `Theme.Chillpill.Block` (block screen), `Theme.Chillpill.Dialog` (translucent suggestion popup) |
+| `res/values/themes.xml` | `Theme.Chillpill` (main), `Theme.Chillpill.Block` (block screen) |
 | `res/drawable/block_activity_background.jpg` | Block-screen background image |
 | `res/drawable/block_background.xml` | Gradient drawable for block overlay |
 | `res/drawable/ic_launcher_foreground.xml` | Vector launcher foreground |

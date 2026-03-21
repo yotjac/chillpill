@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.1" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
@@ -47,13 +47,6 @@
             android:exported="false"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.Chillpill.Block" />
-        <activity
-            android:name=".SuggestRestrictionActivity"
-            android:exported="false"
-            android:taskAffinity=""
-            android:excludeFromRecents="true"
-            android:theme="@style/Theme.Chillpill.Dialog" />
-
         <service
             android:name=".service.ChillpillAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"

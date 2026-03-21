@@ -12,9 +12,9 @@ import android.view.accessibility.AccessibilityEvent
 import com.chillpill.AppBlockActivity
 import com.chillpill.ChillpillApp
 import com.chillpill.ReInterventionActivity
-import com.chillpill.SuggestRestrictionActivity
 import com.chillpill.data.suggestion.ExcludedApps
 import com.chillpill.data.usage.UsageEventType
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,11 +29,17 @@ class ChillpillAccessibilityService : AccessibilityService() {
 
     /** Single-thread scope so only one processEvent runs at a time; all access to previousForegroundPackage is on this thread. */
     private val eventProcessorScope = CoroutineScope(
-        SupervisorJob() + Dispatchers.Default.limitedParallelism(1)
+        SupervisorJob() +
+            Dispatchers.Default.limitedParallelism(1) +
+            CoroutineExceptionHandler { _, t ->
+                Log.e(TAG, "Uncaught exception in eventProcessorScope (accessibility pipeline)", t)
+            }
     )
 
     /** Previous foreground package; used to detect "leaving" for grace extension. Updated at end of each event. Only accessed from eventProcessorScope. */
     private var previousForegroundPackage: String? = null
+
+    private val overlayManager: SuggestionOverlayManager by lazy { SuggestionOverlayManager(this) }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -81,16 +87,19 @@ class ChillpillAccessibilityService : AccessibilityService() {
             // GracePeriodService reads this when the timer expires to decide re-intervene vs set grace-expired flag
             BlockingSharedState.setCurrentForegroundPackage(pkg)
 
-            if (pkg !in restrictedPackages) {
-                handleNonRestrictedApp(pkg)
+            // While our suggestion overlay is visible, ignore accessibility events to avoid
+            // displacing the overlay or launching competing UI.
+            if (overlayManager.isShowing) {
+                Log.d(TAG, "processEvent: suggestion overlay showing; skipping pkg=$pkg")
                 return
             }
 
-            if (tryHandleGraceExpiredReIntervention(pkg)) {
-                Log.d(TAG, "processEvent: handled grace-expired re-intervention for pkg=$pkg")
-                setPreviousForeground(pkg)
+            if (pkg !in restrictedPackages) {
+                handleNonRestrictedApp(pkg, graceMs)
                 return
             }
+
+            tryHandleGraceExpiredReIntervention(pkg)
             if (BlockingSharedState.isInGracePeriod(pkg)) {
                 Log.d(TAG, "processEvent: pkg=$pkg in grace period, allowing")
                 setPreviousForeground(pkg)
@@ -100,8 +109,8 @@ class ChillpillAccessibilityService : AccessibilityService() {
             handleEnteringRestrictedAppFromElsewhere(pkg)
 
             setPreviousForeground(pkg)
-        } catch (e: Exception) {
-            Log.e(TAG, "processEvent failed for pkg=$pkg", e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "processEvent failed for pkg=$pkg", t)
         }
     }
 
@@ -116,28 +125,21 @@ class ChillpillAccessibilityService : AccessibilityService() {
         }
     }
 
-    private suspend fun tryHandleGraceExpiredReIntervention(pkg: String): Boolean {
+    /** If grace expired while user was away, clear the flag so we fall through to the regular block screen (not re-intervention). */
+    private fun tryHandleGraceExpiredReIntervention(pkg: String): Boolean {
         val expiredPkg = BlockingSharedState.graceExpiredForPackage ?: return false
         if (expiredPkg != pkg) return false
-        val disabledPackages = withContext(Dispatchers.IO) {
-            app.restrictedAppsRepository.reInterventionDisabledPackages.first()
-        }
-        if (pkg in disabledPackages) {
-            Log.d(TAG, "tryHandleGraceExpiredReIntervention: re-intervention disabled for pkg=$pkg, clearing flag without blocking")
-            BlockingSharedState.setGraceExpiredForPackage(null)
-            return true
-        }
         BlockingSharedState.setGraceExpiredForPackage(null)
-        withContext(Dispatchers.IO) {
-            app.usageEventsRepository.recordEvent(pkg, UsageEventType.OPEN_ATTEMPT)
-        }
-        startBlockActivity(pkg, isReIntervention = true)
-        return true
+        return false
     }
 
     private suspend fun handleEnteringRestrictedAppFromElsewhere(pkg: String) {
-        withContext(Dispatchers.IO) {
-            app.usageEventsRepository.recordEvent(pkg, UsageEventType.OPEN_ATTEMPT)
+        try {
+            withContext(Dispatchers.IO) {
+                app.usageEventsRepository.recordEvent(pkg, UsageEventType.OPEN_ATTEMPT)
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "handleEnteringRestrictedAppFromElsewhere: recordEvent failed pkg=$pkg", t)
         }
         startBlockActivity(pkg, isReIntervention = false)
     }
@@ -147,7 +149,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
         previousForegroundPackage = pkg
     }
 
-    private suspend fun handleNonRestrictedApp(pkg: String) {
+    private suspend fun handleNonRestrictedApp(pkg: String, graceMs: Long) {
         Log.d(TAG, "processEvent: pkg not restricted, considering suggestion flow")
 
         // Never suggest for hardcoded excluded packages.
@@ -169,8 +171,14 @@ class ChillpillAccessibilityService : AccessibilityService() {
             setPreviousForeground(pkg)
             return
         }
-        val foregroundMs = withContext(Dispatchers.IO) {
-            queryForegroundTimeMs(pkg, SUGGESTION_WINDOW_MS)
+        val foregroundMs = try {
+            withContext(Dispatchers.IO) {
+                queryForegroundTimeMs(pkg, SUGGESTION_WINDOW_MS)
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "handleNonRestrictedApp: queryForegroundTimeMs failed for pkg=$pkg", t)
+            setPreviousForeground(pkg)
+            return
         }
         val foregroundMinutes = foregroundMs / 60_000L
         Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg foregroundMinutes=$foregroundMinutes in last 12h")
@@ -179,20 +187,98 @@ class ChillpillAccessibilityService : AccessibilityService() {
             return
         }
 
-        val isIgnored = withContext(Dispatchers.IO) {
-            app.suggestionRepository.isIgnored(pkg)
+        val isIgnored: Boolean
+        val isPermanentlyExcluded: Boolean
+        try {
+            isIgnored = withContext(Dispatchers.IO) {
+                app.suggestionRepository.isIgnored(pkg)
+            }
+            isPermanentlyExcluded = withContext(Dispatchers.IO) {
+                app.suggestionRepository.isPermanentlyExcluded(pkg)
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "handleNonRestrictedApp: suggestionRepository read failed pkg=$pkg", t)
+            setPreviousForeground(pkg)
+            return
         }
-        val isPermanentlyExcluded = withContext(Dispatchers.IO) {
-            app.suggestionRepository.isPermanentlyExcluded(pkg)
-        }
+        Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg isIgnored=$isIgnored isPermanentlyExcluded=$isPermanentlyExcluded")
         if (isIgnored || isPermanentlyExcluded) {
-            Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg is ignored=$isIgnored permanentlyExcluded=$isPermanentlyExcluded")
             setPreviousForeground(pkg)
             return
         }
 
         app.appOpenTracker.markSuggestionShown(pkg)
-        startSuggestRestrictionActivity(pkg)
+
+        val appName = resolveAppName(pkg)
+        Log.d(TAG, "handleNonRestrictedApp: calling overlayManager.show pkg=$pkg appName=$appName")
+        try {
+            overlayManager.show(
+                packageName = pkg,
+                appName = appName,
+                onRestrict = {
+                    eventProcessorScope.launch {
+                        try {
+                            app.restrictedAppsRepository.addRestricted(pkg)
+                            app.suggestionRepository.removeIgnored(pkg)
+                            app.appOpenTracker.clearSuggestionShown(pkg)
+
+                            BlockingSharedState.setGraceValidUntil(
+                                pkg,
+                                System.currentTimeMillis() + graceMs
+                            )
+                            startGracePeriodService(pkg)
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "suggestion onRestrict failed pkg=$pkg", t)
+                        } finally {
+                            try {
+                                overlayManager.dismiss()
+                            } catch (t: Throwable) {
+                                Log.e(TAG, "suggestion onRestrict: overlay dismiss failed pkg=$pkg", t)
+                            }
+                        }
+                    }
+                },
+                onIgnore = {
+                    eventProcessorScope.launch {
+                        try {
+                            app.suggestionRepository.markIgnored(pkg)
+                            app.appOpenTracker.clearSuggestionShown(pkg)
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "suggestion onIgnore failed pkg=$pkg", t)
+                        } finally {
+                            try {
+                                overlayManager.dismiss()
+                            } catch (t: Throwable) {
+                                Log.e(TAG, "suggestion onIgnore: overlay dismiss failed pkg=$pkg", t)
+                            }
+                        }
+                    }
+                },
+                onNeverAskAgain = {
+                    eventProcessorScope.launch {
+                        try {
+                            app.suggestionRepository.addPermanentlyExcluded(pkg)
+                            app.appOpenTracker.clearSuggestionShown(pkg)
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "suggestion onNeverAskAgain failed pkg=$pkg", t)
+                        } finally {
+                            try {
+                                overlayManager.dismiss()
+                            } catch (t: Throwable) {
+                                Log.e(TAG, "suggestion onNeverAskAgain: overlay dismiss failed pkg=$pkg", t)
+                            }
+                        }
+                    }
+                }
+            )
+        } catch (t: Throwable) {
+            Log.e(
+                TAG,
+                "handleNonRestrictedApp: overlayManager.show failed or threw before attach pkg=$pkg appName=$appName",
+                t
+            )
+            app.appOpenTracker.clearSuggestionShown(pkg)
+        }
         setPreviousForeground(pkg)
     }
 
@@ -239,22 +325,30 @@ class ChillpillAccessibilityService : AccessibilityService() {
             Log.d(TAG, "startBlockActivity: launching packageName=$packageName isReIntervention=$isReIntervention")
             applicationContext.startActivity(intent)
             Log.d(TAG, "startBlockActivity: startActivity returned for packageName=$packageName (if block does not appear, check Android 10+ background start restrictions)")
-        } catch (e: Exception) {
-            Log.e(TAG, "startBlockActivity failed for packageName=$packageName", e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "startBlockActivity failed for packageName=$packageName", t)
         }
     }
 
-    private fun startSuggestRestrictionActivity(packageName: String) {
+    private fun startGracePeriodService(packageName: String) {
         try {
-            val intent = Intent(applicationContext, SuggestRestrictionActivity::class.java).apply {
-                setPackage(applicationContext.packageName)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_HISTORY)
-                putExtra(SuggestRestrictionActivity.EXTRA_PACKAGE_NAME, packageName)
+            val serviceIntent = Intent(applicationContext, GracePeriodService::class.java).apply {
+                action = GracePeriodService.ACTION_START
+                putExtra(GracePeriodService.EXTRA_PACKAGE_NAME, packageName)
             }
-            Log.d(TAG, "startSuggestRestrictionActivity: launching suggestion for packageName=$packageName")
-            applicationContext.startActivity(intent)
-        } catch (e: Exception) {
-            Log.e(TAG, "startSuggestRestrictionActivity failed for packageName=$packageName", e)
+            Log.d(TAG, "startGracePeriodService: starting grace for pkg=$packageName")
+            applicationContext.startForegroundService(serviceIntent)
+        } catch (t: Throwable) {
+            Log.e(TAG, "startGracePeriodService failed for pkg=$packageName", t)
+        }
+    }
+
+    private fun resolveAppName(packageName: String): String {
+        return try {
+            val appInfo = packageManager.getApplicationInfo(packageName, 0)
+            packageManager.getApplicationLabel(appInfo).toString()
+        } catch (_: android.content.pm.PackageManager.NameNotFoundException) {
+            packageName
         }
     }
 
@@ -263,6 +357,6 @@ class ChillpillAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "ChillpillA11y"
         private const val SUGGESTION_WINDOW_MS = 12L * 60L * 60L * 1000L // 12 hours
-        private const val SUGGESTION_THRESHOLD_MINUTES = 20L
+        private const val SUGGESTION_THRESHOLD_MINUTES = 1L
     }
 }

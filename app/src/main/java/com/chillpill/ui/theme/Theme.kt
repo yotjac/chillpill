@@ -72,16 +72,26 @@ private val ChillpillShapes = Shapes(
 @Composable
 fun ChillpillTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    /**
+     * When `false`, skips all status bar / window insets logic. Use for Compose hosted in a
+     * [android.app.Service] overlay — [LocalView] is not an Activity window and touching
+     * window APIs here has caused crashes.
+     */
+    applyWindowDecor: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
-    val view = LocalView.current
-    if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.background.toArgb()
-            WindowCompat.getInsetsController(window, view).apply {
-                isAppearanceLightStatusBars = !darkTheme
+    if (applyWindowDecor) {
+        val view = LocalView.current
+        // Only Activities have a Window; never cast context to Activity blindly.
+        val activity = view.context as? Activity
+        if (!view.isInEditMode && activity != null) {
+            SideEffect {
+                val window = activity.window
+                window.statusBarColor = colorScheme.background.toArgb()
+                WindowCompat.getInsetsController(window, view).apply {
+                    isAppearanceLightStatusBars = !darkTheme
+                }
             }
         }
     }

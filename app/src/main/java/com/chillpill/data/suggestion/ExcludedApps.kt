@@ -15,6 +15,7 @@ object ExcludedApps {
         "com.microsoft.emmx",
         "com.opera.browser",
         "com.brave.browser",
+        "com.waze",
         "com.sec.android.app.sbrowser",
         "com.vivaldi.browser",
 
