@@ -59,6 +59,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chillpill.ChillpillApp
 import com.chillpill.ui.common.AppIcon
 import java.util.Calendar
+import androidx.compose.ui.res.stringResource
+import com.chillpill.R
 
 @Composable
 fun HomeScreen(
@@ -143,10 +145,12 @@ private fun PermissionBanner(
         color = AlertBannerBackground,
         shape = RoundedCornerShape(0.dp)
     ) {
+        val bannerText = stringResource(R.string.home_banner_accessibility_required)
+        val fixHereText = stringResource(R.string.home_banner_fix_here)
         val annotatedString = buildAnnotatedString {
-            append("Accessibility permission required: ")
+            append(bannerText)
             val fixHereStart = length
-            append("fix here")
+            append(fixHereText)
             addStringAnnotation(tag = "fix_here", annotation = "", start = fixHereStart, end = length)
             addStyle(
                 style = SpanStyle(color = AlertBannerLink, textDecoration = TextDecoration.Underline),
@@ -160,7 +164,7 @@ private fun PermissionBanner(
         ) {
             Icon(
                 imageVector = Icons.Filled.Warning,
-                contentDescription = "Permission required",
+                contentDescription = stringResource(R.string.home_banner_permission_required),
                 tint = AlertBannerText,
                 modifier = Modifier.size(24.dp)
             )
@@ -186,9 +190,9 @@ private fun HomeGreeting(modifier: Modifier = Modifier) {
     val calendar = Calendar.getInstance()
     val hour = calendar.get(Calendar.HOUR_OF_DAY)
     val greeting = when (hour) {
-        in 5..11 -> "Good morning"
-        in 12..17 -> "Good afternoon"
-        else -> "Good evening"
+        in 5..11 -> stringResource(R.string.home_greeting_morning)
+        in 12..17 -> stringResource(R.string.home_greeting_afternoon)
+        else -> stringResource(R.string.home_greeting_evening)
     }
 
     Column(
@@ -251,7 +255,7 @@ private fun HeroStatsCard(
                     )
                 }
                 Text(
-                    text = "distractions blocked today",
+                    text = stringResource(R.string.home_stat_caption),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
@@ -270,7 +274,7 @@ private fun RestrictedAppsRow(
         modifier = modifier.fillMaxWidth()
     ) {
         Text(
-            text = "Your Restricted Apps",
+            text = stringResource(R.string.home_restricted_apps_title),
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             color = MaterialTheme.colorScheme.primary
         )
@@ -303,7 +307,7 @@ private fun RestrictedAppsRow(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "+$remaining",
+                        text = stringResource(R.string.home_more_apps_count, remaining),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -324,15 +328,15 @@ private fun NavigationCards(
         horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         NavigationCard(
-            title = "Settings",
-            subtitle = "Fine-tune your limits",
+            title = stringResource(R.string.home_nav_settings_title),
+            subtitle = stringResource(R.string.home_nav_settings_subtitle),
             icon = Icons.Outlined.Settings,
             onClick = onOpenSettings,
             modifier = Modifier.weight(1f)
         )
         NavigationCard(
-            title = "Statistics",
-            subtitle = "See your progress",
+            title = stringResource(R.string.home_nav_statistics_title),
+            subtitle = stringResource(R.string.home_nav_statistics_subtitle),
             icon = Icons.Outlined.BarChart,
             onClick = onOpenStatistics,
             modifier = Modifier.weight(1f)
@@ -392,10 +396,12 @@ private fun DismissiblePermissionBanner(
         color = AlertBannerBackground,
         shape = RoundedCornerShape(0.dp)
     ) {
+        val bannerText = stringResource(R.string.home_banner_usage_access)
+        val fixHereText = stringResource(R.string.home_banner_fix_here)
         val annotatedString = buildAnnotatedString {
-            append("Usage access improves app sorting: ")
+            append(bannerText)
             val fixHereStart = length
-            append("fix here")
+            append(fixHereText)
             addStringAnnotation(tag = "fix_here", annotation = "", start = fixHereStart, end = length)
             addStyle(
                 style = SpanStyle(color = AlertBannerLink, textDecoration = TextDecoration.Underline),
@@ -409,7 +415,7 @@ private fun DismissiblePermissionBanner(
         ) {
             Icon(
                 imageVector = Icons.Filled.Warning,
-                contentDescription = "Permission optional",
+                contentDescription = stringResource(R.string.home_banner_permission_optional),
                 tint = AlertBannerText,
                 modifier = Modifier.size(24.dp)
             )
@@ -433,7 +439,7 @@ private fun DismissiblePermissionBanner(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
-                    contentDescription = "Dismiss",
+                    contentDescription = stringResource(R.string.action_dismiss),
                     tint = AlertBannerText
                 )
             }

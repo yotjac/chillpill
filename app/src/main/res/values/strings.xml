@@ -1,22 +1,118 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">ChillPill</string>
-    <string name="block_message_opens_count">Opened this app %d times in the last 24 hours</string>
-    <string name="block_message_grace_expired">Your grace period is up</string>
+    <string name="app_name">Chillpill</string>
+
+    <!-- Shared actions -->
+    <string name="action_back">Back</string>
+    <string name="action_save">Save</string>
+    <string name="action_dismiss">Dismiss</string>
+
+    <!-- Block / waiting screen -->
     <string name="block_continue_to_app">Continue to app</string>
-    <string name="block_back_to_home">Back to Home</string>
-    <string name="block_attempts_last_24h">attempts to open %1$s in the last 24 hours</string>
-    <string name="grace_notification_title">Chillpill – grace period</string>
-    <string name="accessibility_service_description">Chillpill uses this to detect when you open restricted apps and show a short wait screen.</string>
-    <string name="suggest_title">You seem to be using %1$s a lot…</string>
-    <string name="suggest_message">Let ChillPill help you reduce your screen time by restricting access to this app</string>
-    <string name="suggest_ignore">Ignore</string>
-    <string name="suggest_add">Restrict App</string>
-    <string name="suggest_never">Never ask me again about %1$s</string>
+    <string name="block_home">Home</string>
+    <plurals name="block_attempts_last_24h">
+        <item quantity="one">attempt to open %1$s in the last 24 hours</item>
+        <item quantity="other">attempts to open %1$s in the last 24 hours</item>
+    </plurals>
+
+    <!-- Re-intervention screen -->
     <string name="re_intervention_still_using">still using</string>
     <string name="re_intervention_chance_to_stop">this is your chance to stop</string>
     <string name="re_intervention_keep_using">keep using the app</string>
+
+    <!-- Services -->
+    <string name="grace_notification_title">Chillpill – grace period</string>
+    <string name="accessibility_service_description">Chillpill uses this to detect when you open restricted apps and show a short wait screen.</string>
+
+    <!-- Suggestion overlay -->
+    <string name="suggest_title">You seem to be using %1$s a lot…</string>
+    <string name="suggest_message">Let Chillpill help you reduce your screen time by restricting access to this app</string>
+    <string name="suggest_ignore">Ignore</string>
+    <string name="suggest_add">Restrict app</string>
+    <string name="suggest_never">Never ask me again about %1$s</string>
+
+    <!-- Home -->
+    <string name="home_banner_accessibility_required">Accessibility permission required: </string>
+    <string name="home_banner_usage_access">Usage access improves app sorting: </string>
+    <string name="home_banner_fix_here">fix here</string>
+    <string name="home_banner_permission_required">Permission required</string>
+    <string name="home_banner_permission_optional">Permission optional</string>
+    <string name="home_greeting_morning">Good morning</string>
+    <string name="home_greeting_afternoon">Good afternoon</string>
+    <string name="home_greeting_evening">Good evening</string>
+    <string name="home_stat_caption">distractions blocked today</string>
+    <string name="home_restricted_apps_title">Your restricted apps</string>
+    <string name="home_more_apps_count">+%1$d</string>
+    <string name="home_nav_settings_title">Settings</string>
+    <string name="home_nav_settings_subtitle">Fine-tune your limits</string>
+    <string name="home_nav_statistics_title">Statistics</string>
+    <string name="home_nav_statistics_subtitle">See your progress</string>
+
+    <!-- Setup -->
+    <string name="setup_button_start">Let\'s go!</string>
+    <string name="setup_button_next">Next</string>
+    <string name="setup_button_finish">Finish</string>
+    <string name="setup_welcome_title">Welcome to Chillpill!</string>
+    <string name="setup_welcome_subtitle">Your pocket-sized digital detox buddy</string>
+    <string name="setup_permissions_title">Set up permissions</string>
+    <string name="setup_usage_access_title">Enable app usage access</string>
+    <string name="setup_accessibility_title">Enable accessibility service</string>
+    <string name="setup_permission_enabled">Enabled</string>
+    <string name="setup_permission_not_enabled">Not enabled</string>
+    <string name="setup_permission_tap_to_enable">Tap to enable</string>
+    <string name="setup_disclosure_collapse">Collapse disclosure</string>
+    <string name="setup_disclosure_expand">Expand disclosure</string>
+    <string name="setup_disclosure_body">Chillpill uses the Accessibility Service only to detect which app is in the foreground. This lets it show a wait screen when you open a restricted app and suggest restricting apps you use frequently. It does not read, collect, or share any content from your screen.</string>
+    <string name="setup_apps_title">Pick your restricted apps</string>
+    <string name="setup_apps_subtitle">Choose the apps you\'d like to take a break from</string>
+    <string name="setup_choose_apps">Choose apps</string>
+    <string name="setup_no_apps_selected">No apps selected yet</string>
+    <string name="setup_remove_from_restricted">Remove from restricted</string>
+    <string name="setup_done_title">You\'re all set!</string>
+    <string name="setup_done_subtitle">Enjoy your Chillpill</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_waiting">Waiting…</string>
+    <string name="settings_section_configuration">Configuration</string>
+    <string name="settings_wait_time_label">Wait time (seconds)</string>
+    <string name="settings_grace_period_label">Grace period (minutes)</string>
+    <string name="settings_section_background">Waiting screen image</string>
+    <string name="settings_background_import_failed">Couldn\'t use that image. Try another one.</string>
+    <string name="settings_section_restricted_apps">Restricted apps</string>
+    <string name="settings_edit_restricted_apps">Edit restricted apps</string>
+    <string name="settings_no_apps_restricted">No apps restricted</string>
+    <string name="settings_app_new_badge">new</string>
+    <string name="settings_remove_from_restricted">Remove from restricted</string>
+    <string name="settings_collapse">Collapse settings</string>
+    <string name="settings_expand">Expand settings</string>
+    <string name="settings_block_again_after_grace">Block again after grace</string>
+    <string name="settings_delta_removed">-%1$d</string>
+    <string name="settings_delta_added">+%1$d</string>
+
+    <!-- Waiting screen image picker -->
+    <string name="background_default">Default</string>
+    <string name="background_your_photo">Your photo</string>
+    <string name="background_choose_photo">Choose a photo from your gallery</string>
+    <string name="background_remove_photo">Remove your photo</string>
+
+    <!-- Settings confirmation -->
     <string name="settings_confirmation_message">Are you sure you want to lower your standards?</string>
     <string name="settings_confirmation_cancel">Cancel</string>
     <string name="settings_confirmation_save">Save</string>
+
+    <!-- App selection -->
+    <string name="app_selection_title">Select apps</string>
+    <string name="app_selection_search">Search apps</string>
+
+    <!-- Statistics -->
+    <string name="statistics_title">Statistics</string>
+    <string name="statistics_range_week">Week</string>
+    <string name="statistics_range_month">Month</string>
+    <string name="statistics_range_three_months">3 months</string>
+    <string name="statistics_range_year">Year</string>
+    <string name="statistics_empty">No restricted apps or no activity in this period</string>
+    <string name="statistics_legend_attempted">Attempted</string>
+    <string name="statistics_legend_entered">Entered</string>
+    <string name="statistics_today_summary">Today: %1$d / %2$d</string>
 </resources>

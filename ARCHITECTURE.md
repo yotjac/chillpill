@@ -83,7 +83,9 @@ com.chillpill/
 │   ├── restricted/
 │   │   └── RestrictedAppsRepository.kt DataStore for restricted package-name set
 │   ├── settings/
-│   │   ├── Settings.kt                Data class (waitTimeSeconds, gracePeriodMinutes)
+│   │   ├── Settings.kt                Data class (waitTimeSeconds, gracePeriodMinutes, blockBackground) + BlockBackground
+│   │   ├── BlockBackgrounds.kt        Registry of the block-screen images bundled in the APK
+│   │   ├── BlockBackgroundStore.kt    Imports/stores the user's own block-screen photo in filesDir/backgrounds/
 │   │   └── SettingsRepository.kt      DataStore for settings + setupCompleted flag
 │   ├── suggestion/
 │   │   ├── AppOpenTracker.kt          In-memory flag for per-session suggestion deduplication
@@ -107,7 +109,7 @@ app/src/test/java/com/chillpill/service/SessionPolicyTest.kt   JVM unit tests fo
 │
 └── ui/
     ├── appblock/
-    │   ├── AppBlockScreen.kt          Block screen composable (wait animation, continue/go-home)
+    │   ├── AppBlockScreen.kt          Block screen composable (wait animation, continue/go-home, background image)
     │   └── AppBlockViewModel.kt       Wait timer logic, event recording
     ├── reintervention/
     │   └── ReInterventionScreen.kt    Re-intervention composable (animated fill, cyan app name, go-home + keep-using)
@@ -123,6 +125,7 @@ app/src/test/java/com/chillpill/service/SessionPolicyTest.kt   JVM unit tests fo
     │   └── SetupViewModel.kt          Step state, permission tracking, advance logic
     ├── settings/
     │   ├── AppSelectionScreen.kt      Searchable list of installed apps with checkboxes
+    │   ├── BlockBackgroundPicker.kt    Thumbnail row for choosing the block-screen image
     │   ├── SettingsConfirmationScreen.kt  Waiting screen before saving restriction-reducing changes
     │   ├── SettingsScreen.kt          Wait time, grace period inputs, restricted apps list, Save button
     │   └── SettingsViewModel.kt       Draft state, deferred save, confirmation timer, installed-app loading
@@ -175,6 +178,7 @@ Manual DI via `ChillpillApp`:
 class ChillpillApp : Application() {
     val blockSharedState    by lazy { BlockSharedState(this) }
     val settingsRepository  by lazy { SettingsRepository(this) }
+    val blockBackgroundStore by lazy { BlockBackgroundStore(this) }
     val restrictedAppsRepository by lazy { RestrictedAppsRepository(this) }
     val appOpenTracker      by lazy { AppOpenTracker() }
     val suggestionRepository by lazy { SuggestionRepository(this) }
@@ -192,9 +196,17 @@ repository properties. No Hilt, Dagger, or Koin.
 ### 5.1 SettingsRepository (DataStore)
 
 - **Store name:** `"settings"`
-- **Keys:** `wait_time_seconds` (Int, default 12), `grace_period_minutes` (Int, default 5), `setup_completed` (Boolean)
+- **Keys:** `wait_time_seconds` (Int, default 12), `grace_period_minutes` (Int, default 5), `setup_completed` (Boolean), `block_background` (String, default absent)
 - **Exposed flows:** `settings: Flow<Settings>`, `setupCompleted: Flow<Boolean>`
-- **Write methods:** `setWaitTimeSeconds`, `setGracePeriodMinutes`, `setSettings`, `setSetupCompleted`
+- **Write methods:** `setWaitTimeSeconds`, `setGracePeriodMinutes`, `setBlockBackground`, `setSettings`, `setSetupCompleted`
+- **`block_background`** encodes the block-screen image as `builtin:<id>` or `custom:<fileName>`, decoded by `BlockBackground.decode`. Anything missing, unknown or containing path separators falls back to the default, so older installs need no migration.
+
+### 5.1.1 BlockBackgroundStore (files)
+
+- **Location:** `filesDir/backgrounds/`, one JPEG per stored photo (`custom_<timestamp>.jpg`), written via a `.tmp` file + rename.
+- **Import:** `importImage(uri)` copies the photo picker's URI (a temporary grant) into app storage, sampled and scaled to ≤ 2048 px on the long side and rotated/mirrored per its EXIF orientation. Every import writes a *new* file name, so the block screen can never read a half-written file.
+- **Cleanup:** `cleanup(keep)` deletes everything except `keep`, skipping `.tmp` files younger than 60 s so a concurrent import is not killed. Called only from `SettingsViewModel` when `draftOnly = true` (on init and after a successful save) — no other screen touches these files.
+- **`latestFileName()`** returns the most recently stored photo, which is what keeps the user's photo on offer in the picker while a bundled image is selected.
 
 ### 5.2 RestrictedAppsRepository (DataStore)
 
@@ -423,9 +435,9 @@ the popup can't be displaced by the target app's rapid activity/window changes.
 | `HomeViewModel` | `permissionsOk`, `showUsageAccessBanner`, `restrictedPackages`, `todayAttempts`, `todayEntered` | Check a11y/usage-access permissions, load today's aggregate stats |
 | `SetupViewModel` | `currentStep` (0–3), `accessibilityGranted`, `usageAccessGranted`, `restrictedPackages`, `canAdvance` | Drive 4-step onboarding, validate each step before advancing |
 | `SettingsViewModel` | `waitTimeSecondsInput`, `gracePeriodMinutesInput`, `restrictedAppsInfo`, `installedApps`, `appSearchQuery`, `hasChanges`, `showConfirmationScreen`, `confirmationProgress`, `confirmationPhase` | Draft-only state (when `draftOnly=true`); load/sort installed apps; persist only on Save; run confirmation timer when saving restriction-reducing changes |
-| `SettingsViewModel` (extended) | `expandedAppPackage`, `reInterventionDisabledPackages` | Track which restricted app card is expanded and which apps have re-intervention disabled. When `draftOnly=false` (e.g. Setup flow's app selection), restricted-app changes persist immediately. |
+| `SettingsViewModel` (extended) | `expandedAppPackage`, `reInterventionDisabledPackages`, `blockBackground`, `customBackgroundFileName`, `backgroundImportFailed` | Track which restricted app card is expanded and which apps have re-intervention disabled. When `draftOnly=false` (e.g. Setup flow's app selection), restricted-app changes persist immediately. |
 | `StatisticsViewModel` | `selectedRange`, `stats: List<AppStatistic>`, `isLoading`, `focusedSeries` | Aggregate daily stats into buckets, auto-refresh every 15 s, legend focus |
-| `AppBlockViewModel` | `phase` (WAITING/COMPLETED), `progress` (0→1), `openCount24h` | Run wait countdown, emit one-shot events (`RequestFinish`, `RequestGoHome`) via Channel |
+| `AppBlockViewModel` | `phase` (WAITING/COMPLETED), `progress` (0→1), `openCount24h`, `blockBackground` (nullable until read) | Run wait countdown, expose the chosen background, emit one-shot events (`RequestFinish`, `RequestGoHome`) via Channel |
 
 All ViewModels expose state via `StateFlow` and screens collect it with
 `collectAsStateWithLifecycle`.
@@ -434,6 +446,7 @@ All ViewModels expose state via `StateFlow` and screens collect it with
 
 - **Deferred save:** Settings are not written to DataStore until the user taps **Save**. A **Save** button in the top bar (left, after the back arrow) is disabled when there are no changes and enabled when any draft change exists (wait time, grace period, restricted apps, or re-intervention toggles).
 - **Restriction-reducing confirmation:** When the user taps Save, if the draft would *reduce* restrictions (grace period increased, wait time decreased, or any restricted app removed), a **settings confirmation screen** is shown instead of persisting immediately. It reuses the re-intervention visual style (black background, animated surface fill from bottom, centered message: "Take a breath before reducing your restrictions…"). The top button is **"back"** (dismiss confirmation, stay on settings); the bottom button **"save changes"** appears only after the current (persisted) wait-time countdown completes. **Back** cancels the confirmation; **save changes** persists and closes the confirmation.
+- **Waiting screen image:** a `BlockBackgroundPicker` row between the configuration fields and the restricted apps list offers the bundled images from `BlockBackgrounds`, the user's own photo when one is stored, and a tile that opens the system photo picker (`ActivityResultContracts.PickVisualMedia` — no permission needed). The picked photo is imported immediately but only *selected in the draft*; the DataStore key is written on Save. Changing the image alone is never restriction-reducing, so it does not trigger the confirmation wait. A failed import surfaces as a snackbar and leaves the draft untouched. Selection is highlighted with the same pending colour as the wait-time field while unsaved.
 - **Restricted apps** section on `SettingsScreen` shows each restricted app as an expandable `Card` with the app icon, label, and an always-visible delete icon in the header row.
 - The entire card header is tappable and includes a chevron icon to indicate that it can expand for additional settings; only one app card is expanded at a time.
 - Expanding a card reveals a single toggle labeled **"Block again after grace"**, which controls whether re-intervention is enabled for that specific app (draft only until Save).
@@ -503,12 +516,17 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
    sets use DataStore; usage events use Room.
 7. **In-memory object for cross-service state** — `BlockingSharedState` is a Kotlin
    `object` (singleton) shared between the accessibility service and grace-period service.
-8. **Separate Activity for block screen** — `AppBlockActivity` is launched outside the
+8. **All user-facing text lives in `strings.xml`** — no string literals in Composables, including
+   `contentDescription`s. Display labels on enums and data classes are `@StringRes` ids
+   (`TimeRange.labelRes`, `BuiltInBackground.labelRes`), resolved with `stringResource` at the call
+   site. Counted text uses `<plurals>` + `pluralStringResource`, never `%d` in a plain string.
+   Brand name is spelled **Chillpill**. Headings and buttons are sentence case.
+9. **Separate Activity for block screen** — `AppBlockActivity` is launched outside the
    NavHost by the accessibility service for the initial block so it can overlay any app.
    Re-intervention uses a dedicated `ReInterventionActivity` with distinct UI (animated fill, cyan app name, different button visibility).
-9. **Accessibility overlay for suggestion dialog** — `SuggestionOverlayManager` shows the
+10. **Accessibility overlay for suggestion dialog** — `SuggestionOverlayManager` shows the
    suggestion via `TYPE_ACCESSIBILITY_OVERLAY` so it can't be displaced by the target app.
-10. **In-memory tracker + DataStore persistence for suggestions** — `AppOpenTracker`
+11. **In-memory tracker + DataStore persistence for suggestions** — `AppOpenTracker`
    tracks which packages have had the suggestion shown this session (deduplication);
    `SuggestionRepository` persists user choices (7-day ignore and permanent exclusion) across restarts.
 
@@ -518,11 +536,10 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
 
 | Path | Contents |
 |------|----------|
-| `res/values/strings.xml` | App name, block-screen messages, suggestion-popup messages, settings confirmation screen (message, back, save changes), accessibility service description |
+| `res/values/strings.xml` | **All** user-facing text: shared actions, block / re-intervention screens, service + accessibility descriptions, suggestion popup, home, setup, settings, waiting-screen image picker, app selection, statistics. Includes the `block_attempts_last_24h` plurals resource |
 | `res/values/colors.xml` | Color definitions |
 | `res/values/themes.xml` | `Theme.Chillpill` (main), `Theme.Chillpill.Block` (block screen) |
-| `res/drawable/block_activity_background.jpg` | Block-screen background image |
-| `res/drawable/block_background.xml` | Gradient drawable for block overlay |
+| `res/drawable-nodpi/block_activity_background.jpg` | Default block-screen background image. **nodpi** so Android does not treat it as mdpi and upscale it in memory |
 | `res/drawable/ic_launcher_foreground.xml` | Vector launcher foreground |
 | `res/xml/accessibility_service_config.xml` | AccessibilityService configuration |
 | `res/mipmap-anydpi-v26/ic_launcher.xml` | Adaptive icon definition |

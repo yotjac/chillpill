@@ -1,5 +1,8 @@
 package com.chillpill.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -35,11 +38,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,8 +63,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.chillpill.ui.common.AppIcon
+import androidx.compose.ui.res.stringResource
+import com.chillpill.R
 
-private val PendingWaitBorderColor = Color(0xFFFF9800)
+internal val PendingWaitBorderColor = Color(0xFFFF9800)
 private val PendingWaitLabelColor = Color(0xFFE65100)
 private val PendingGraceBorderColor = Color(0xFFFFB300)
 private val PendingGraceLabelColor = Color(0xFFD84315)
@@ -82,6 +91,10 @@ fun SettingsScreen(
     val reInterventionDisabledPackages by viewModel.reInterventionDisabledPackages.collectAsStateWithLifecycle()
     val originalReInterventionDisabledPackages by viewModel.originalReInterventionDisabledPackages.collectAsStateWithLifecycle()
     val expandedAppPackage by viewModel.expandedAppPackage.collectAsStateWithLifecycle()
+    val blockBackground by viewModel.blockBackground.collectAsStateWithLifecycle()
+    val originalBlockBackground by viewModel.originalBlockBackground.collectAsStateWithLifecycle()
+    val customBackgroundFileName by viewModel.customBackgroundFileName.collectAsStateWithLifecycle()
+    val backgroundImportFailed by viewModel.backgroundImportFailed.collectAsStateWithLifecycle()
     val hasChanges by viewModel.hasChanges.collectAsStateWithLifecycle()
     val showConfirmationScreen by viewModel.showConfirmationScreen.collectAsStateWithLifecycle()
     val confirmationProgress by viewModel.confirmationProgress.collectAsStateWithLifecycle()
@@ -91,6 +104,19 @@ fun SettingsScreen(
     val focusManager = LocalFocusManager.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    val importFailedMessage = stringResource(R.string.settings_background_import_failed)
+    val pickBackgroundImage = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> if (uri != null) viewModel.onCustomBackgroundPicked(uri) }
+
+    LaunchedEffect(backgroundImportFailed) {
+        if (backgroundImportFailed) {
+            snackbarHostState.showSnackbar(importFailedMessage)
+            viewModel.onBackgroundImportErrorShown()
+        }
+    }
 
     val defaultFieldColors = OutlinedTextFieldDefaults.colors()
     val waitPendingColors = OutlinedTextFieldDefaults.colors(
@@ -111,18 +137,19 @@ fun SettingsScreen(
     Box(modifier = modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                 TopAppBar(
-                    title = { Text("Settings") },
+                    title = { Text(stringResource(R.string.settings_title)) },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                            Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                         }
                     },
                     actions = {
                         if (showConfirmationScreen) {
                             Text(
-                                text = "Waiting…",
+                                text = stringResource(R.string.settings_waiting),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(end = 16.dp)
@@ -143,7 +170,7 @@ fun SettingsScreen(
                                 enabled = hasChanges,
                                 modifier = Modifier.padding(end = 16.dp)
                             ) {
-                                Text("Save")
+                                Text(stringResource(R.string.action_save))
                             }
                         }
                     }
@@ -161,7 +188,7 @@ fun SettingsScreen(
                         .padding(horizontal = 24.dp)
                 ) {
                     Text(
-                        text = "Configuration",
+                        text = stringResource(R.string.settings_section_configuration),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
@@ -178,7 +205,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = waitTimeSecondsInput,
                         onValueChange = { viewModel.onWaitTimeChanged(it) },
-                        label = { Text("Wait time (seconds)") },
+                        label = { Text(stringResource(R.string.settings_wait_time_label)) },
                         isError = waitTimeInvalid,
                         colors = if (waitPending) waitPendingColors else defaultFieldColors,
                         modifier = Modifier
@@ -191,7 +218,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = gracePeriodMinutesInput,
                         onValueChange = { viewModel.onGracePeriodChanged(it) },
-                        label = { Text("Grace period (minutes)") },
+                        label = { Text(stringResource(R.string.settings_grace_period_label)) },
                         isError = gracePeriodInvalid,
                         colors = if (gracePending) gracePendingColors else defaultFieldColors,
                         modifier = Modifier
@@ -201,12 +228,35 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                     )
 
+                    Text(
+                        text = stringResource(R.string.settings_section_background),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                    )
+                    BlockBackgroundPicker(
+                        selected = blockBackground,
+                        customFileName = customBackgroundFileName,
+                        isPending = blockBackground != originalBlockBackground,
+                        onBuiltInSelected = viewModel::onBuiltInBackgroundSelected,
+                        onCustomSelected = viewModel::onCustomBackgroundSelected,
+                        onPickCustom = {
+                            pickBackgroundImage.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        onRemoveCustom = viewModel::onCustomBackgroundRemoved,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
                     val restrictedAdded = (restrictedPackages - originalRestrictedPackages).size
                     val restrictedDeleted = (originalRestrictedPackages - restrictedPackages).size
+                    val deltaRemoved = stringResource(R.string.settings_delta_removed, restrictedDeleted)
+                    val deltaAdded = stringResource(R.string.settings_delta_added, restrictedAdded)
                     val restrictedDeltaLabel = buildString {
-                        if (restrictedDeleted > 0) append("-$restrictedDeleted")
+                        if (restrictedDeleted > 0) append(deltaRemoved)
                         if (restrictedDeleted > 0 && restrictedAdded > 0) append(" ")
-                        if (restrictedAdded > 0) append("+$restrictedAdded")
+                        if (restrictedAdded > 0) append(deltaAdded)
                     }
                     val restrictedDirty = restrictedPackages != originalRestrictedPackages ||
                         reInterventionDisabledPackages != originalReInterventionDisabledPackages
@@ -222,7 +272,7 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Restricted apps",
+                                text = stringResource(R.string.settings_section_restricted_apps),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = if (restrictedDirty) {
                                     RestrictedPendingContentColor
@@ -240,12 +290,12 @@ fun SettingsScreen(
                             }
                         }
                         IconButton(onClick = onEditRestrictedApps) {
-                            Icon(Icons.Filled.Edit, contentDescription = "Edit restricted apps")
+                            Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.settings_edit_restricted_apps))
                         }
                     }
                     if (restrictedAppsInfo.isEmpty()) {
                         Text(
-                            text = "No apps restricted",
+                            text = stringResource(R.string.settings_no_apps_restricted),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
@@ -301,7 +351,7 @@ fun SettingsScreen(
                                             )
                                             if (isNewlyAdded) {
                                                 Text(
-                                                    text = "new",
+                                                    text = stringResource(R.string.settings_app_new_badge),
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = if (cardPending) {
                                                         RestrictedPendingContentColor
@@ -316,7 +366,7 @@ fun SettingsScreen(
                                             ) {
                                                 Icon(
                                                     Icons.Filled.Delete,
-                                                    contentDescription = "Remove from restricted"
+                                                    contentDescription = stringResource(R.string.settings_remove_from_restricted)
                                                 )
                                             }
                                             Icon(
@@ -326,9 +376,9 @@ fun SettingsScreen(
                                                     Icons.Filled.ExpandMore
                                                 },
                                                 contentDescription = if (isExpanded) {
-                                                    "Collapse settings"
+                                                    stringResource(R.string.settings_collapse)
                                                 } else {
-                                                    "Expand settings"
+                                                    stringResource(R.string.settings_expand)
                                                 }
                                             )
                                         }
@@ -352,7 +402,7 @@ fun SettingsScreen(
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
                                                     Text(
-                                                        text = "Block again after grace",
+                                                        text = stringResource(R.string.settings_block_again_after_grace),
                                                         style = MaterialTheme.typography.bodyMedium,
                                                         modifier = Modifier.weight(1f)
                                                     )

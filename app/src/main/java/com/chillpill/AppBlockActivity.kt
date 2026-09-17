@@ -90,6 +90,7 @@ class AppBlockActivity : ComponentActivity() {
                 val phase by viewModel.phase.collectAsStateWithLifecycle()
                 val progress by viewModel.progress.collectAsStateWithLifecycle()
                 val openCount24h by viewModel.openCount24h.collectAsStateWithLifecycle()
+                val background by viewModel.blockBackground.collectAsStateWithLifecycle()
                 AppBlockScreen(
                     modifier = Modifier.fillMaxSize(),
                     phase = phase,
@@ -97,6 +98,7 @@ class AppBlockActivity : ComponentActivity() {
                     openCount24h = openCount24h,
                     isReIntervention = viewModel.isReIntervention,
                     appName = appName,
+                    background = background,
                     onContinue = viewModel::onContinue,
                     onGoHome = viewModel::onGoHome
                 )

@@ -116,7 +116,7 @@ fun ReInterventionScreen(
                     shape = MaterialTheme.shapes.large
                 ) {
                     Text(
-                        text = stringResource(R.string.block_back_to_home),
+                        text = stringResource(R.string.block_home),
                         style = MaterialTheme.typography.titleMedium
                     )
                 }

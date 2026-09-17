@@ -59,6 +59,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chillpill.ChillpillApp
 import com.chillpill.ui.common.AppIcon
+import androidx.compose.ui.res.stringResource
+import com.chillpill.R
 
 @Composable
 fun SetupScreen(
@@ -147,9 +149,9 @@ fun SetupScreen(
         ) {
             Text(
                 text = when (currentStep) {
-                    0 -> "Let's Go!"
-                    3 -> "Finish"
-                    else -> "Next"
+                    0 -> stringResource(R.string.setup_button_start)
+                    3 -> stringResource(R.string.setup_button_finish)
+                    else -> stringResource(R.string.setup_button_next)
                 }
             )
         }
@@ -164,7 +166,7 @@ private fun WelcomeStep() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "Welcome to ChillPill!",
+            text = stringResource(R.string.setup_welcome_title),
             style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
             color = MaterialTheme.colorScheme.primary,
             textAlign = TextAlign.Center,
@@ -172,7 +174,7 @@ private fun WelcomeStep() {
         )
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "Your pocket-sized digital detox buddy",
+            text = stringResource(R.string.setup_welcome_subtitle),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -190,7 +192,7 @@ private fun PermissionsStep(
     onFixUsageAccess: () -> Unit
 ) {
     Text(
-        text = "Set up Permissions",
+        text = stringResource(R.string.setup_permissions_title),
         style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
         color = MaterialTheme.colorScheme.primary,
         textAlign = TextAlign.Center,
@@ -208,7 +210,7 @@ private fun PermissionsStep(
         )
         Spacer(modifier = Modifier.height(12.dp))
         PermissionCard(
-            title = "Enable App Usage Access",
+            title = stringResource(R.string.setup_usage_access_title),
             granted = usageAccessGranted,
             onClick = onFixUsageAccess
         )
@@ -244,19 +246,19 @@ private fun AccessibilityPermissionCard(
                 ) {
                     Icon(
                         imageVector = if (granted) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
-                        contentDescription = if (granted) "Enabled" else "Not enabled",
+                        contentDescription = stringResource(if (granted) R.string.setup_permission_enabled else R.string.setup_permission_not_enabled),
                         tint = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                         modifier = Modifier.size(32.dp)
                     )
                     Spacer(modifier = Modifier.size(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Enable Accessibility Service",
+                            text = stringResource(R.string.setup_accessibility_title),
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = if (granted) "Enabled" else "Tap to enable",
+                            text = stringResource(if (granted) R.string.setup_permission_enabled else R.string.setup_permission_tap_to_enable),
                             style = MaterialTheme.typography.bodySmall,
                             color = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -272,7 +274,7 @@ private fun AccessibilityPermissionCard(
                 IconButton(onClick = { expanded = !expanded }) {
                     Icon(
                         imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (expanded) "Collapse disclosure" else "Expand disclosure"
+                        contentDescription = stringResource(if (expanded) R.string.setup_disclosure_collapse else R.string.setup_disclosure_expand)
                     )
                 }
             }
@@ -288,7 +290,7 @@ private fun AccessibilityPermissionCard(
                 ) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.onSurface)
                     Text(
-                        text = "ChillPill uses the Accessibility Service only to detect which app is in the foreground. This lets it show a wait screen when you open a restricted app and suggest restricting apps you use frequently. It does not read, collect, or share any content from your screen.",
+                        text = stringResource(R.string.setup_disclosure_body),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 12.dp, bottom = 20.dp)
@@ -322,7 +324,7 @@ private fun PermissionCard(
         ) {
             Icon(
                 imageVector = if (granted) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
-                contentDescription = if (granted) "Enabled" else "Not enabled",
+                contentDescription = stringResource(if (granted) R.string.setup_permission_enabled else R.string.setup_permission_not_enabled),
                 tint = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                 modifier = Modifier.size(32.dp)
             )
@@ -334,7 +336,7 @@ private fun PermissionCard(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = if (granted) "Enabled" else "Tap to enable",
+                    text = stringResource(if (granted) R.string.setup_permission_enabled else R.string.setup_permission_tap_to_enable),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -351,7 +353,7 @@ private fun RestrictedAppsStep(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
-            text = "Pick Your Restricted Apps",
+            text = stringResource(R.string.setup_apps_title),
             style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
             color = MaterialTheme.colorScheme.primary,
             textAlign = TextAlign.Center,
@@ -360,7 +362,7 @@ private fun RestrictedAppsStep(
                 .padding(bottom = 8.dp)
         )
         Text(
-            text = "Choose the apps you'd like to take a break from",
+            text = stringResource(R.string.setup_apps_subtitle),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -377,7 +379,7 @@ private fun RestrictedAppsStep(
                 modifier = Modifier.height(48.dp),
                 shape = RoundedCornerShape(24.dp)
             ) {
-                Text("Choose Apps")
+                Text(stringResource(R.string.setup_choose_apps))
             }
         }
         Spacer(modifier = Modifier.height(32.dp))
@@ -389,7 +391,7 @@ private fun RestrictedAppsStep(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No apps selected yet",
+                    text = stringResource(R.string.setup_no_apps_selected),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -421,7 +423,7 @@ private fun RestrictedAppsStep(
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Close,
-                                contentDescription = "Remove from restricted",
+                                contentDescription = stringResource(R.string.setup_remove_from_restricted),
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -440,7 +442,7 @@ private fun DoneStep() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "You're All Set!",
+            text = stringResource(R.string.setup_done_title),
             style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
             color = MaterialTheme.colorScheme.primary,
             textAlign = TextAlign.Center,
@@ -448,7 +450,7 @@ private fun DoneStep() {
         )
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "Enjoy Your ChillPill",
+            text = stringResource(R.string.setup_done_subtitle),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,

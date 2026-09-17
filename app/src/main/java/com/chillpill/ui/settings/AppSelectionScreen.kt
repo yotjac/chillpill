@@ -30,6 +30,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chillpill.ChillpillApp
 import com.chillpill.ui.common.AppIcon
+import androidx.compose.ui.res.stringResource
+import com.chillpill.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,10 +77,10 @@ private fun AppSelectionContent(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
-                title = { Text("Select apps") },
+                title = { Text(stringResource(R.string.app_selection_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 }
             )
@@ -93,7 +95,7 @@ private fun AppSelectionContent(
             OutlinedTextField(
                 value = appSearchQuery,
                 onValueChange = { viewModel.onSearchQueryChanged(it) },
-                label = { Text("Search apps") },
+                label = { Text(stringResource(R.string.app_selection_search)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 16.dp, bottom = 8.dp),

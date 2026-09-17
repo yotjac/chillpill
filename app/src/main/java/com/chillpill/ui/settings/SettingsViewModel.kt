@@ -4,10 +4,12 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.chillpill.ChillpillApp
+import com.chillpill.data.settings.BlockBackground
 import com.chillpill.ui.appblock.AppBlockPhase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -16,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -62,6 +65,22 @@ class SettingsViewModel(
     private val _gracePeriodMinutesInput = MutableStateFlow("")
     val gracePeriodMinutesInput: StateFlow<String> = _gracePeriodMinutesInput.asStateFlow()
 
+    private val _originalBlockBackground = MutableStateFlow<BlockBackground>(BlockBackground.Default)
+    val originalBlockBackground: StateFlow<BlockBackground> = _originalBlockBackground.asStateFlow()
+
+    private val _blockBackground = MutableStateFlow<BlockBackground>(BlockBackground.Default)
+    val blockBackground: StateFlow<BlockBackground> = _blockBackground.asStateFlow()
+
+    /**
+     * The user's own photo currently available in the picker, if any. Independent of the
+     * selection, so switching to a bundled image does not throw the photo away.
+     */
+    private val _customBackgroundFileName = MutableStateFlow<String?>(null)
+    val customBackgroundFileName: StateFlow<String?> = _customBackgroundFileName.asStateFlow()
+
+    private val _backgroundImportFailed = MutableStateFlow(false)
+    val backgroundImportFailed: StateFlow<Boolean> = _backgroundImportFailed.asStateFlow()
+
     private val _installedApps = MutableStateFlow<List<AppInfo>>(emptyList())
     val installedApps: StateFlow<List<AppInfo>> = _installedApps.asStateFlow()
 
@@ -80,30 +99,53 @@ class SettingsViewModel(
     private val _appSearchQuery = MutableStateFlow("")
     val appSearchQuery: StateFlow<String> = _appSearchQuery.asStateFlow()
 
-    val hasChanges: StateFlow<Boolean> = combine(
-        combine(
-            combine(_waitTimeSecondsInput, _gracePeriodMinutesInput) { w, g -> w to g },
-            combine(_restrictedPackages, _reInterventionDisabledPackages) { r, rid -> r to rid }
-        ) { wg, rr ->
-            wg to rr
-        },
-        combine(
-            combine(_originalReInterventionDisabledPackages, _originalWaitTimeSeconds) { o, ow -> o to ow },
-            combine(_originalGracePeriodMinutes, _originalRestrictedPackages) { og, orp -> og to orp }
-        ) { oow, gorp ->
-            oow to gorp
-        }
-    ) { drafts, originals ->
-        val (waitInput, graceInput) = drafts.first
-        val (restricted, reInterventionDisabled) = drafts.second
-        val (origReInterventionDisabled, origWait) = originals.first
-        val (origGrace, origRestricted) = originals.second
-        val waitDraft = waitInput.toIntOrNull()?.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS) ?: origWait
-        val graceDraft = graceInput.toIntOrNull()?.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES) ?: origGrace
-        waitDraft != origWait ||
-            graceDraft != origGrace ||
-            restricted != origRestricted ||
-            reInterventionDisabled != origReInterventionDisabled
+    private data class DraftInputs(
+        val waitTimeInput: String,
+        val gracePeriodInput: String,
+        val restrictedPackages: Set<String>,
+        val reInterventionDisabledPackages: Set<String>,
+        val blockBackground: BlockBackground
+    )
+
+    private data class OriginalValues(
+        val waitTimeSeconds: Int,
+        val gracePeriodMinutes: Int,
+        val restrictedPackages: Set<String>,
+        val reInterventionDisabledPackages: Set<String>,
+        val blockBackground: BlockBackground
+    )
+
+    private val draftInputs: Flow<DraftInputs> = combine(
+        _waitTimeSecondsInput,
+        _gracePeriodMinutesInput,
+        _restrictedPackages,
+        _reInterventionDisabledPackages,
+        _blockBackground
+    ) { waitInput, graceInput, restricted, reInterventionDisabled, background ->
+        DraftInputs(waitInput, graceInput, restricted, reInterventionDisabled, background)
+    }
+
+    private val originalValues: Flow<OriginalValues> = combine(
+        _originalWaitTimeSeconds,
+        _originalGracePeriodMinutes,
+        _originalRestrictedPackages,
+        _originalReInterventionDisabledPackages,
+        _originalBlockBackground
+    ) { wait, grace, restricted, reInterventionDisabled, background ->
+        OriginalValues(wait, grace, restricted, reInterventionDisabled, background)
+    }
+
+    val hasChanges: StateFlow<Boolean> = combine(draftInputs, originalValues) { draft, original ->
+        // An empty or invalid field is treated as "unchanged" rather than as an edit.
+        val waitDraft = draft.waitTimeInput.toIntOrNull()
+            ?.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS) ?: original.waitTimeSeconds
+        val graceDraft = draft.gracePeriodInput.toIntOrNull()
+            ?.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES) ?: original.gracePeriodMinutes
+        waitDraft != original.waitTimeSeconds ||
+            graceDraft != original.gracePeriodMinutes ||
+            draft.restrictedPackages != original.restrictedPackages ||
+            draft.reInterventionDisabledPackages != original.reInterventionDisabledPackages ||
+            draft.blockBackground != original.blockBackground
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     // Confirmation screen state (when saving would reduce restrictions)
@@ -125,6 +167,17 @@ class SettingsViewModel(
             _originalGracePeriodMinutes.value = settings.gracePeriodMinutes
             _waitTimeSecondsInput.value = settings.waitTimeSeconds.toString()
             _gracePeriodMinutesInput.value = settings.gracePeriodMinutes.toString()
+            _originalBlockBackground.value = settings.blockBackground
+            _blockBackground.value = settings.blockBackground
+            val persistedCustom = (settings.blockBackground as? BlockBackground.Custom)?.fileName
+            // The stored photo stays on offer even while a bundled image is selected.
+            val availableCustom = persistedCustom ?: app.blockBackgroundStore.latestFileName()
+            _customBackgroundFileName.value = availableCustom
+            if (draftOnly) {
+                // Drop photos left behind by drafts that were never saved, or replaced earlier.
+                // Only the settings screen does this; other screens must not touch these files.
+                app.blockBackgroundStore.cleanup(setOfNotNull(persistedCustom, availableCustom))
+            }
         }
         viewModelScope.launch {
             val restricted = app.restrictedAppsRepository.restrictedPackages.first()
@@ -236,6 +289,41 @@ class SettingsViewModel(
         val n = digitsOnly.toIntOrNull() ?: return
         val clamped = n.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES)
         if (clamped != n) _gracePeriodMinutesInput.value = clamped.toString()
+    }
+
+    fun onBuiltInBackgroundSelected(id: String) {
+        _blockBackground.value = BlockBackground.BuiltIn(id)
+    }
+
+    /**
+     * Imports the picked photo into app storage right away (the picker's URI grant is temporary)
+     * and selects it in the draft. Nothing is persisted until Save.
+     */
+    fun onCustomBackgroundPicked(uri: Uri) {
+        viewModelScope.launch {
+            val fileName = app.blockBackgroundStore.importImage(uri)
+            if (fileName == null) {
+                _backgroundImportFailed.value = true
+                return@launch
+            }
+            _customBackgroundFileName.value = fileName
+            _blockBackground.value = BlockBackground.Custom(fileName)
+        }
+    }
+
+    fun onCustomBackgroundSelected(fileName: String) {
+        _blockBackground.value = BlockBackground.Custom(fileName)
+    }
+
+    fun onCustomBackgroundRemoved() {
+        _customBackgroundFileName.value = null
+        if (_blockBackground.value is BlockBackground.Custom) {
+            _blockBackground.value = BlockBackground.Default
+        }
+    }
+
+    fun onBackgroundImportErrorShown() {
+        _backgroundImportFailed.value = false
     }
 
     fun onRestrictedChanged(packageName: String, selected: Boolean) {
@@ -388,16 +476,24 @@ class SettingsViewModel(
             val graceMinutes = getDraftGracePeriodMinutes()
             val restricted = _restrictedPackages.value
             val reInterventionDisabled = _reInterventionDisabledPackages.value
+            val background = _blockBackground.value
             withContext(Dispatchers.IO) {
                 app.settingsRepository.setWaitTimeSeconds(waitSeconds)
                 app.settingsRepository.setGracePeriodMinutes(graceMinutes)
+                app.settingsRepository.setBlockBackground(background)
                 app.restrictedAppsRepository.setRestricted(restricted)
                 app.restrictedAppsRepository.setReInterventionDisabled(reInterventionDisabled)
             }
+            // Keep the photo still offered in the picker plus whatever was just persisted (the
+            // user may have removed the photo while the save was in flight); drop the rest.
+            app.blockBackgroundStore.cleanup(
+                setOfNotNull(_customBackgroundFileName.value, (background as? BlockBackground.Custom)?.fileName)
+            )
             _originalWaitTimeSeconds.value = waitSeconds
             _originalGracePeriodMinutes.value = graceMinutes
             _originalRestrictedPackages.value = restricted
             _originalReInterventionDisabledPackages.value = reInterventionDisabled
+            _originalBlockBackground.value = background
             _showConfirmationScreen.value = false
             _confirmationProgress.value = 0f
             _confirmationPhase.value = AppBlockPhase.WAITING

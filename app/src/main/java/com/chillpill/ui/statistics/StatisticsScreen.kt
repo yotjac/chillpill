@@ -50,6 +50,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chillpill.ChillpillApp
 import com.chillpill.ui.common.AppIcon
+import androidx.compose.ui.res.stringResource
+import com.chillpill.R
 
 private const val FocusedAlpha = 1f
 private const val UnfocusedAlpha = 0.3f
@@ -76,10 +78,10 @@ fun StatisticsScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         TopAppBar(
-            title = { Text("Statistics") },
+            title = { Text(stringResource(R.string.statistics_title)) },
             navigationIcon = {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                    Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                 }
             }
         )
@@ -102,7 +104,7 @@ fun StatisticsScreen(
                             count = TimeRange.entries.size
                         )
                     ) {
-                        Text(range.label)
+                        Text(stringResource(range.labelRes))
                     }
                 }
             }
@@ -126,7 +128,7 @@ fun StatisticsScreen(
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = "No restricted apps or no activity in this period",
+                        text = stringResource(R.string.statistics_empty),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -139,13 +141,13 @@ fun StatisticsScreen(
                     horizontalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
                     LegendItem(
-                        label = "Attempted",
+                        label = stringResource(R.string.statistics_legend_attempted),
                         color = AttemptedColorHoney,
                         isFocused = focusedSeries == FocusedSeries.ATTEMPTED,
                         onClick = { viewModel.onLegendClicked(FocusedSeries.ATTEMPTED) }
                     )
                     LegendItem(
-                        label = "Entered",
+                        label = stringResource(R.string.statistics_legend_entered),
                         color = MaterialTheme.colorScheme.primary,
                         isFocused = focusedSeries == FocusedSeries.ENTERED,
                         onClick = { viewModel.onLegendClicked(FocusedSeries.ENTERED) }
@@ -232,7 +234,7 @@ private fun AppStatCard(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Today: ${stat.attemptsToday} / ${stat.enteredToday}",
+                        text = stringResource(R.string.statistics_today_summary, stat.attemptsToday, stat.enteredToday),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

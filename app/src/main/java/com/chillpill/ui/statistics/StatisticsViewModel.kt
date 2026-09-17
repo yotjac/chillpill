@@ -16,15 +16,17 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
+import androidx.annotation.StringRes
+import com.chillpill.R
 
 private const val DAY_MS = 24 * 60 * 60 * 1000L
 private const val REFRESH_INTERVAL_MS = 15_000L
 
-enum class TimeRange(val label: String, val durationMs: Long) {
-    WEEK("Week", 7 * DAY_MS),
-    MONTH("Month", 30 * DAY_MS),
-    THREE_MONTHS("3 Months", 90 * DAY_MS),
-    YEAR("Year", 365 * DAY_MS)
+enum class TimeRange(@StringRes val labelRes: Int, val durationMs: Long) {
+    WEEK(R.string.statistics_range_week, 7 * DAY_MS),
+    MONTH(R.string.statistics_range_month, 30 * DAY_MS),
+    THREE_MONTHS(R.string.statistics_range_three_months, 90 * DAY_MS),
+    YEAR(R.string.statistics_range_year, 365 * DAY_MS)
 }
 
 enum class FocusedSeries { NONE, ATTEMPTED, ENTERED }

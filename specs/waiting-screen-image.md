@@ -1,6 +1,6 @@
 # Waiting-screen image: user-selectable background
 
-Status: PLAN ONLY — nothing implemented. Based on reading the working tree of 2026-09-17.
+Status: IMPLEMENTED 2026-09-17 (not yet built or run — see "Verification still owed" at the end).
 
 ## Proposal
 
@@ -132,19 +132,54 @@ Per AGENTS.md, a UI decision needs a visual demo: produce a small HTML mock of t
   text sits on it, so no extra scrim is planned. Check on device with a very bright photo.
 
 ## Tasks
-- [ ] HTML mock of the "Waiting screen image" section; review with Yotam
-- [ ] `BlockBackground` model + `Settings` field
-- [ ] `SettingsRepository`: `block_background` key, parse/encode, `setBlockBackground`, `setSettings`
-- [ ] `BlockBackgrounds` registry; move images to `drawable-nodpi`, delete `block_background.xml`
-- [ ] `BlockBackgroundStore`: import (downscale, EXIF, atomic write), `cleanup(keep)`, `fileFor(name)`
-- [ ] `AppBlockViewModel` exposes `blockBackground`; `AppBlockActivity` passes it down
-- [ ] `AppBlockScreen`: parameterised async loader with fallback chain
-- [ ] `SettingsViewModel`: draft/original flows, handlers, `hasChanges`, save + cleanup
-- [ ] `SettingsScreen`: thumbnail row, Photo Picker launcher, pending highlight, a11y semantics
+- [x] ~~HTML mock of the "Waiting screen image" section~~ — skipped; implemented directly at Yotam's request
+- [x] `BlockBackground` model + `Settings` field
+- [x] `SettingsRepository`: `block_background` key, parse/encode, `setBlockBackground`, `setSettings`
+- [x] `BlockBackgrounds` registry; move images to `drawable-nodpi`, delete `block_background.xml`
+- [x] `BlockBackgroundStore`: import (downscale, EXIF, atomic write), `cleanup(keep)`, `fileFor(name)`
+- [x] `AppBlockViewModel` exposes `blockBackground`; `AppBlockActivity` passes it down
+- [x] `AppBlockScreen`: parameterised async loader with fallback chain
+- [x] `SettingsViewModel`: draft/original flows, handlers, `hasChanges`, save + cleanup
+- [x] `SettingsScreen`: thumbnail row, Photo Picker launcher, pending highlight, a11y semantics
 - [ ] Add bundled images when supplied
-- [ ] `ARCHITECTURE.md`: new DataStore key, new files, `filesDir/backgrounds/`
+- [x] `ARCHITECTURE.md`: new DataStore key, new files, `filesDir/backgrounds/`
 - [ ] `gradlew.bat assembleDebug lintDebug`
 - [ ] Manual check on device: pick built-in → Save → block screen shows it; pick photo → leave
       without saving → old image still used and orphan removed on next Settings open; pick photo →
       Save → shown; delete the file via adb → default shown, no crash; image-only change does not
       open the confirmation wait; image change + shorter wait time still does
+
+## Implementation notes (what differs from the Design above)
+
+- **`blockBackground` is nullable on the block screen.** `AppBlockViewModel.blockBackground` starts
+  as `null` rather than `Default`, so the screen shows the plain surface colour until the DataStore
+  read lands. Seeding it with the default made the block screen flash the bundled image before the
+  user's own photo appeared, and decoded two full-size bitmaps per block.
+- **The stored photo outlives the selection.** `_customBackgroundFileName` is separate from the
+  selection and, on init, falls back to `BlockBackgroundStore.latestFileName()`. Selecting a bundled
+  image therefore keeps the user's photo on offer in the picker instead of deleting it on the next
+  Settings open. The photo goes away only via the tile's Remove action.
+- **Cleanup is gated on `draftOnly`.** `AppSelectionScreen` builds its own `SettingsViewModel` with
+  `draftOnly = false`; without the gate its `init` would delete a photo a live settings draft was
+  still holding.
+- **`hasChanges` was restructured** into `DraftInputs` / `OriginalValues` (two 5-flow `combine`s
+  instead of the previous nest of nested pairs). The original values are now part of the comparison
+  step rather than being read non-reactively inside the draft `combine`, which also fixes a latent
+  phantom-change after save when a number field was left blank. Note both `combine`s sit exactly at
+  the 5-flow typed-overload limit — adding a sixth field needs restructuring, not another argument.
+- **EXIF handling covers the mirrored orientations** (flip/transpose/transverse), not just the three
+  rotations, via a `Matrix` rather than a degree count.
+- **`cleanup` skips `.tmp` files younger than 60 s**, so tapping Save while an import is still
+  running cannot make that import fail.
+- **The block screen samples the custom photo** against the display size rather than decoding the
+  stored image at full 2048 px.
+
+## Verification still owed
+
+No build was run: Gradle, Maven Central and the Android SDK are all unreachable from the agent
+environment (egress policy), and the local VM has no Android SDK. The change was instead
+compile-reviewed symbol by symbol. Before trusting it:
+
+- [ ] `gradlew.bat assembleDebug lintDebug`
+- [ ] The manual device checks listed above, plus: tap the photo tile after selecting a bundled
+      image (it must re-select the photo, not re-open the gallery), and TalkBack on the picker row.

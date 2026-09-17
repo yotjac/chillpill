@@ -3,15 +3,19 @@ package com.chillpill.ui.appblock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.chillpill.ChillpillApp
+import com.chillpill.data.settings.BlockBackground
 import com.chillpill.data.usage.UsageEventType
 import com.chillpill.service.BlockingSharedState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -36,6 +40,14 @@ class AppBlockViewModel(
 
     private val _openCount24h = MutableStateFlow(0)
     val openCount24h: StateFlow<Int> = _openCount24h.asStateFlow()
+
+    /**
+     * Background image for the block screen. Null until the setting has been read, so the screen
+     * shows a plain surface for that moment rather than flashing the default image.
+     */
+    val blockBackground: StateFlow<BlockBackground?> = app.settingsRepository.settings
+        .map { it.blockBackground }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _events = Channel<AppBlockEvent>(Channel.BUFFERED)
     val events: kotlinx.coroutines.flow.Flow<AppBlockEvent> = _events.receiveAsFlow()
@@ -96,7 +108,7 @@ class AppBlockViewModel(
 
     /**
      * Records that the block/re-intervention screen was dismissed by a system gesture
-     * (e.g. swipe-to-recents, notification shade) rather than the explicit "Go Home" button.
+     * (e.g. swipe-to-recents, notification shade) rather than the explicit "Home" button.
      * The activity is already finishing on its own via onUserLeaveHint by the time this is
      * called, so this only records the LEFT_APP event for stats accuracy; it does not emit a
      * navigation event (no RequestGoHome), since the OS is already handling where focus goes.
