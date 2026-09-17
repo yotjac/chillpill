@@ -76,7 +76,7 @@ class AppBlockViewModel(
                 )
                 val settings = app.settingsRepository.settings.first()
                 val graceMs = settings.gracePeriodMinutes * 60L * 1000L
-                BlockingSharedState.setGraceValidUntil(packageName, System.currentTimeMillis() + graceMs)
+                BlockingSharedState.sessions.startSession(packageName, graceMs)
             }
             _events.send(AppBlockEvent.RequestFinish)
         }

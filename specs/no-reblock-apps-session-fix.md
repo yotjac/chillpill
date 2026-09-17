@@ -1,9 +1,10 @@
-# No-re-block apps: session fix + 20-second return window
+# No-re-block apps: session fix + 10-second return window
 
 "No-re-block apps" = restricted apps with **"Block again after grace" turned OFF**
 (`RestrictedAppsRepository.reInterventionDisabledPackages`).
 
-Status: PLAN ONLY — nothing implemented. Findings come from reading the code (working tree of
+Status: IMPLEMENTED 2026-09-18, review fixes applied the same day (see "Review follow-ups"
+below; tasks 8 and 10 open; not yet run on a device). Findings come from reading the code (working tree of
 2026-09-17, including the uncommitted changes to GracePeriodService / BlockingSharedState);
 none of it was reproduced on a device. Each finding lists a repro so it can be confirmed with
 `adb logcat -s ChillpillA11y GracePeriodService BlockingSharedState`.
@@ -13,7 +14,7 @@ none of it was reproduced on a device. Each finding lists a repro so it can be c
 ### Intent
 1. Make no-re-block apps behave predictably: after the grace period ends the user may stay in the
    app, but once they really leave, the next open shows the block screen.
-2. New: for these apps, leaving for **less than 20 seconds** never re-triggers the block screen.
+2. New: for these apps, leaving for **less than 10 seconds** never re-triggers the block screen.
 
 ### Findings (bugs / quirks)
 
@@ -64,7 +65,7 @@ jobs (uncommitted) correctly stop one app's Continue from cancelling another app
 
 ### Scope
 In: leave/return logic in the accessibility service, shared state, tests, ARCHITECTURE.md.
-Out: UI, settings, statistics schema. 20 s applies to no-re-block apps only (one-line change to
+Out: UI, settings, statistics schema. 10 s applies to no-re-block apps only (one-line change to
 extend to all apps later).
 
 ### Open decision (please confirm before implementation)
@@ -85,17 +86,17 @@ Replace "leaving grants grace" with an explicit per-package **session**:
 Pure decision function (unit-testable, clock injected), e.g. `service/SessionPolicy.kt`:
 
 ```
-onContinue(pkg)            -> graceValidUntil = now + grace; activeSessions += pkg; leftAt -= pkg
+startSession(pkg, grace)   -> graceValidUntil = now + grace; activeSessions += pkg; leftAt -= pkg
 onLeft(pkg)                -> if (pkg in activeSessions) leftAt[pkg] = now      // no grace change
 onEnterFromElsewhere(pkg, noReblock):
     if now < graceValidUntil[pkg]                                   -> ALLOW
     if noReblock && pkg in activeSessions
-       && leftAt[pkg] != null && now - leftAt[pkg] < 20_000          -> ALLOW (overstay continues)
+       && leftAt[pkg] != null && now - leftAt[pkg] < 10_000          -> ALLOW (overstay continues)
     else -> BLOCK; activeSessions -= pkg; leftAt -= pkg; graceValidUntil -= pkg
 on ALLOW                   -> leftAt -= pkg
 ```
 
-Properties: the 20 s rule is evaluated lazily on return (no extra timer); showing a block ends
+Properties: the 10 s rule is evaluated lazily on return (no extra timer); showing a block ends
 the session, so Home-from-block can never grant anything (fixes F3 regardless of event order);
 an exit at 4:55 with return at 5:10 of a 5-min grace is allowed for no-re-block apps.
 
@@ -105,32 +106,70 @@ an exit at 4:55 with return at 5:10 of a 5-min grace is allowed for no-re-block 
   `previousForegroundPackage` nor call `onLeft`;
 - because lock-screen events are then ignored too, register `ACTION_SCREEN_OFF` in the
   accessibility service: call `onLeft(prev)` and reset `previousForegroundPackage = null`, so
-  unlocking always re-evaluates entry (>= 20 s locked → block).
+  unlocking always re-evaluates entry (>= 10 s locked → block).
 - Share sheet / permission dialog / custom tab still count as leaving; under the new rule they only
-  matter after 20 s, which is acceptable.
+  matter after 10 s, which is acceptable.
 
-Constant: `RETURN_WINDOW_MS = 20_000L` in `SessionPolicy`.
+Constant: `RETURN_WINDOW_MS = 10_000L` in `SessionPolicy`.
+
+### Review follow-ups (2026-09-18)
+
+A code review of the implementation found holes in the "left" detection; the design above is
+amended as follows:
+
+- **Own-package events.** Chillpill's block/re-intervention/overlay windows still never touch
+  `previousForegroundPackage`, but `MainActivity` / `ChillpillSettingsActivity` are real
+  destinations: they call `onLeft(prev)` and set `previousForegroundPackage` to our package, so
+  X → Chillpill (notification tap) → X is a normal re-entry. The "don't count our own block
+  screen" guard in `recordLeavingRestrictedApp` was redundant (own-package events never reach it)
+  and is gone.
+- **Overlay filter only while a session is live.** SystemUI / keyboard windows are ignored only
+  when `prev` has an active session (`SessionPolicy.hasActiveSession`). With the block screen up
+  (session already ended) they count as a foreground change, otherwise block → shade → tap X
+  notification hit the same-app guard and opened X unblocked (F3 through SystemUI).
+- **Keyboard windows, not keyboard packages.** For a package in `enabledInputMethodList` an event
+  is an overlay only if its class is not one of that package's activities
+  (`PackageManager.getActivityInfo`); otherwise apps like SwiftKey/Grammarly were invisible to the
+  service. The manifest declares `<queries>` for `android.view.InputMethod` so the list is complete
+  under API 30+ package visibility.
+- **Unlock re-evaluation.** `ACTION_USER_PRESENT` re-evaluates the package `ForegroundPackageQuery`
+  (UsageStats, extracted from `GracePeriodService`) reports, if no window event arrived since
+  unlock; otherwise the screen-off `leftAt` went stale and forced a block on a later 5 s hop.
+- **Screen-off race.** `processEvent` suspends on DataStore reads; a screen-off arriving meanwhile
+  could be overwritten by the resumed event. A `screenOffGeneration` counter drops such events.
+- **Grace expiry while away ends the session** for re-intervention-enabled apps
+  (`GracePeriodService`), so "every block ends the session" holds and toggling "Block again after
+  grace" off cannot revive a dead session. The `graceExpiredForPackages` set is removed.
+- **Back on the block screen** goes through `viewModel.onGoHome()` so `LEFT_APP` is recorded once.
+- `processEvent` reads `RestrictedAppsRepository.snapshot` (one DataStore read for both sets);
+  grace for the suggestion "Restrict" button is read when tapped.
 
 ## Tasks
 
-- [ ] 0. Confirm the open decision above; commit or stash the in-flight working-tree changes first
+- [x] 0. Confirm the open decision above; commit or stash the in-flight working-tree changes first
         so this lands as a separate diff.
-- [ ] 1. Add `SessionPolicy` (+ state in `BlockingSharedState`) with injected clock.
-- [ ] 2. `recordLeavingRestrictedApp`: drop `setGraceValidUntil`; call `onLeft(prev)`; keep the
-        "don't count our own block screen" guard.
-- [ ] 3. `processEvent`: replace `isInGracePeriod` check with `onEnterFromElsewhere(pkg, noReblock)`
+- [x] 1. Add `SessionPolicy` (+ state in `BlockingSharedState`) with injected clock.
+- [x] 2. `recordLeavingRestrictedApp`: drop `setGraceValidUntil`; call `onLeft(prev)`. (The
+        "don't count our own block screen" guard turned out to be dead code and was removed.)
+- [x] 3. `processEvent`: replace `isInGracePeriod` check with `onEnterFromElsewhere(pkg, noReblock)`
         (read `reInterventionDisabledPackages` next to `restrictedPackages`).
-- [ ] 4. `AppBlockViewModel.onContinue` and suggestion `onRestrict`: call `onContinue(pkg)`.
-- [ ] 5. Overlay-package filter + `ACTION_SCREEN_OFF` receiver (register in `onServiceConnected`,
+- [x] 4. `AppBlockViewModel.onContinue` and suggestion `onRestrict`: call `startSession(pkg, grace)`.
+- [x] 5. Overlay-package filter + `ACTION_SCREEN_OFF` receiver (register in `onServiceConnected`,
         unregister in `onDestroy`).
-- [ ] 6. GracePeriodService: no logic change needed once task 2 lands; update its KDoc (deadline
-        no longer moves). Remove dead `graceExpiredForPackages` plumbing if still unused.
-- [ ] 7. F6 fix (`leavingByButton` flag) — optional, separate commit.
+- [x] 6. GracePeriodService: update its KDoc (deadline no longer moves); end the session on
+        expiry-while-away. `graceExpiredForPackages` plumbing removed.
+- [x] 7. F6 fix (`leavingByButton` flag) — optional, separate commit.
 - [ ] 8. Optional (F4): persist sessions/leftAt/graceValidUntil via the unused `BlockSharedState`
         prefs wrapper; restore on service connect. Needs wall-clock for persisted values.
-- [ ] 9. Unit tests for `SessionPolicy`: F1 scenario → BLOCK; exit 19 s → ALLOW; exit 21 s → BLOCK;
-        exit across grace expiry <20 s → ALLOW; normal app after expiry, exit 5 s → BLOCK;
+- [x] 9. Unit tests for `SessionPolicy`: F1 scenario → BLOCK; exit 9 s → ALLOW; exit 11 s → BLOCK;
+        exit across grace expiry <10 s → ALLOW; normal app after expiry, exit 5 s → BLOCK;
         Home from block then reopen → BLOCK; two apps interleaved.
+- [x] 12. Review follow-ups (see Design): own main UI counts as leaving; overlay filter gated on a
+         live session; keyboard window vs activity; USER_PRESENT re-evaluation; screen-off
+         generation guard; end session on expiry-while-away; Back records LEFT_APP; single
+         DataStore snapshot read.
 - [ ] 10. Device pass with logcat for: shade open 60 s inside overstayed app (no block), lock 30 s
-         (block), recents round-trip 5 s (no block), F3 repro (block).
-- [ ] 11. Update ARCHITECTURE.md §6 (shared state table, service flow).
+         (block), recents round-trip 5 s (no block), F3 repro (block), block → shade → tap X
+         notification (block), X → Chillpill notification → X after 20 s (block), typing with a
+         second keyboard for 20 s (no block).
+- [x] 11. Update ARCHITECTURE.md §6 (shared state table, service flow).

@@ -5,13 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.app.usage.UsageEvents
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
-import android.app.usage.UsageStatsManager
 import androidx.core.app.NotificationCompat
 import com.chillpill.ChillpillApp
 import com.chillpill.ReInterventionActivity
@@ -39,11 +36,10 @@ import java.util.concurrent.ConcurrentHashMap
  * job cannot tear down the others, and a [CoroutineExceptionHandler] ensures such a failure is
  * logged instead of crashing the process.
  *
- * Rather than counting down a fixed local duration, each job polls the authoritative expiry
- * held in [BlockingSharedState] (`isInGracePeriod`). This means if the user's grace window gets
- * extended after the timer started (e.g. by leaving and returning to the app before expiry —
- * see [ChillpillAccessibilityService.recordLeavingRestrictedApp]), the job simply keeps waiting
- * instead of firing re-intervention against a now-stale expiry time.
+ * Rather than counting down a local duration, each job polls the authoritative deadline held in
+ * [BlockingSharedState] (`isInGracePeriod`). That deadline is fixed when the user taps Continue
+ * (leaving the app does not extend it); it only moves if the user passes a block again, which
+ * also restarts this package's job.
  */
 class GracePeriodService : Service() {
 
@@ -127,54 +123,9 @@ class GracePeriodService : Service() {
         graceJobs[packageName] = job
     }
 
-    /**
-     * Best-effort lookup of the package currently in the foreground, using UsageStatsManager.
-     * Returns null (letting the caller fall back to [BlockingSharedState.currentForegroundPackage])
-     * unless the most recent relevant event in the window is an unmatched RESUME — i.e. we only
-     * report a package as "foreground" when nothing has paused it since. This avoids treating a
-     * package as still active when the user has since locked the screen, gone home, or switched
-     * away, which would previously have been missed because pause events were never consulted.
-     */
-    private fun queryActualForegroundPackage(): String? {
-        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-            ?: return null
-        val now = System.currentTimeMillis()
-        val usageEvents = usm.queryEvents(now - 600_000, now)
-        val event = UsageEvents.Event()
-        val resumeType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            UsageEvents.Event.ACTIVITY_RESUMED
-        } else {
-            @Suppress("DEPRECATION")
-            UsageEvents.Event.MOVE_TO_FOREGROUND
-        }
-        val pauseType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            UsageEvents.Event.ACTIVITY_PAUSED
-        } else {
-            @Suppress("DEPRECATION")
-            UsageEvents.Event.MOVE_TO_BACKGROUND
-        }
-        var lastResumedPkg: String? = null
-        var lastEventWasUnpausedResume = false
-        while (usageEvents.hasNextEvent()) {
-            usageEvents.getNextEvent(event)
-            when (event.eventType) {
-                resumeType -> {
-                    lastResumedPkg = event.packageName
-                    lastEventWasUnpausedResume = true
-                }
-                pauseType -> {
-                    if (event.packageName == lastResumedPkg) {
-                        lastEventWasUnpausedResume = false
-                    }
-                }
-            }
-        }
-        return if (lastEventWasUnpausedResume) lastResumedPkg else null
-    }
-
     private suspend fun onGraceExpired(packageName: String) {
         BlockingSharedState.clearGraceForPackage(packageName)
-        val currentForeground = queryActualForegroundPackage()
+        val currentForeground = ForegroundPackageQuery.query(this)
             ?: BlockingSharedState.currentForegroundPackage
         val reInterventionDisabled = withContext(Dispatchers.IO) {
             app.restrictedAppsRepository.reInterventionDisabledPackages.first()
@@ -203,13 +154,17 @@ class GracePeriodService : Service() {
                 app.usageEventsRepository.recordEvent(packageName, UsageEventType.OPEN_ATTEMPT)
                 app.usageEventsRepository.recordEvent(packageName, UsageEventType.GRACE_EXPIRED_WHILE_ACTIVE)
             }
+            // Re-intervention is a block: the session is over until the user taps Continue again.
+            BlockingSharedState.sessions.endSession(packageName)
             startBlockActivity(packageName)
         } else {
-            Log.d(TAG, "onGraceExpired: user left app, setting graceExpiredForPackage")
+            Log.d(TAG, "onGraceExpired: user left app, ending session (next open shows the regular block)")
             withContext(Dispatchers.IO) {
                 app.usageEventsRepository.recordEvent(packageName, UsageEventType.GRACE_EXPIRED_WHILE_AWAY)
             }
-            BlockingSharedState.setGraceExpiredForPackage(packageName)
+            // For apps with re-intervention enabled, grace *is* the session: once it runs out the
+            // user has to pass the block again, whether they are still inside or not.
+            BlockingSharedState.sessions.endSession(packageName)
         }
     }
 

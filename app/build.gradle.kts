@@ -102,4 +102,5 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences-core:1.0.0")
     implementation("com.google.code.gson:gson:2.10.1")
     ksp("androidx.room:room-compiler:$roomVersion")
+    testImplementation("junit:junit:4.13.2")
 }

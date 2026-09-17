@@ -4,13 +4,22 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
+import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.inputmethod.InputMethodManager
+import androidx.core.content.ContextCompat
 import com.chillpill.AppBlockActivity
 import com.chillpill.ChillpillApp
+import com.chillpill.ChillpillSettingsActivity
+import com.chillpill.MainActivity
 import com.chillpill.ReInterventionActivity
 import com.chillpill.data.suggestion.ExcludedApps
 import com.chillpill.data.usage.UsageEventType
@@ -36,8 +45,58 @@ class ChillpillAccessibilityService : AccessibilityService() {
             }
     )
 
-    /** Previous foreground package; used to detect "leaving" for grace extension. Updated at end of each event. Only accessed from eventProcessorScope. */
+    /** Previous foreground package; used to detect the user leaving a restricted app. Updated at end of each event. Only accessed from eventProcessorScope. */
     private var previousForegroundPackage: String? = null
+
+    /**
+     * Bumped by the screen-off receiver. limitedParallelism(1) serialises *execution*, not
+     * coroutines: while [processEvent] is suspended on a DataStore read the receiver's coroutine
+     * can run and reset [previousForegroundPackage]; a stale [processEvent] must then not write
+     * it back. Only accessed from eventProcessorScope.
+     */
+    private var screenOffGeneration = 0L
+
+    /** Cached packages of enabled keyboards (see [isOverlayWindow]). Only accessed from eventProcessorScope. */
+    private var imePackages: Set<String> = emptySet()
+    private var imePackagesLoadedAtElapsed = 0L
+
+    /**
+     * Screen off counts as leaving the current app. Lock-screen windows belong to SystemUI, which
+     * [isOverlayWindow] ignores, so without this a locked phone would look like "still in the app".
+     * Resetting previousForegroundPackage makes the first event after unlock re-evaluate entry;
+     * because some devices emit no window event for the app that was open when the screen went off,
+     * ACTION_USER_PRESENT additionally re-evaluates whatever UsageStats says is in front.
+     */
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> eventProcessorScope.launch {
+                    Log.d(TAG, "screen off: treating as leaving pkg=$previousForegroundPackage")
+                    screenOffGeneration++
+                    previousForegroundPackage?.let { BlockingSharedState.sessions.onLeft(it) }
+                    previousForegroundPackage = null
+                    BlockingSharedState.setCurrentForegroundPackage(null)
+                }
+                Intent.ACTION_USER_PRESENT -> eventProcessorScope.launch {
+                    // A window event after unlock (if any) already re-evaluated entry.
+                    if (previousForegroundPackage != null) return@launch
+                    val foreground = withContext(Dispatchers.IO) {
+                        try {
+                            ForegroundPackageQuery.query(applicationContext)
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "user present: foreground query failed", t)
+                            null
+                        }
+                    } ?: return@launch
+                    if (previousForegroundPackage != null) return@launch
+                    if (foreground == applicationContext.packageName || isOverlayWindow(foreground, null)) return@launch
+                    Log.d(TAG, "user present: no window event since unlock, re-evaluating pkg=$foreground")
+                    processEvent(foreground)
+                }
+            }
+        }
+    }
+    private var screenReceiverRegistered = false
 
     private val overlayManager: SuggestionOverlayManager by lazy { SuggestionOverlayManager(this) }
 
@@ -49,20 +108,73 @@ class ChillpillAccessibilityService : AccessibilityService() {
             packageNames = null // receive events for all packages; we filter by restricted set
         }
         serviceInfo = info
+        if (!screenReceiverRegistered) {
+            ContextCompat.registerReceiver(
+                this,
+                screenReceiver,
+                IntentFilter().apply {
+                    addAction(Intent.ACTION_SCREEN_OFF)
+                    addAction(Intent.ACTION_USER_PRESENT)
+                },
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            screenReceiverRegistered = true
+        }
+    }
+
+    override fun onDestroy() {
+        if (screenReceiverRegistered) {
+            try {
+                unregisterReceiver(screenReceiver)
+            } catch (t: Throwable) {
+                Log.e(TAG, "unregister screenReceiver failed", t)
+            }
+            screenReceiverRegistered = false
+        }
+        super.onDestroy()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
-        Log.d(TAG, "onAccessibilityEvent: foreground pkg=$pkg")
+        val className = event.className?.toString()
+        Log.d(TAG, "onAccessibilityEvent: foreground pkg=$pkg class=$className")
         if (pkg == applicationContext.packageName) {
             BlockingSharedState.setCurrentForegroundPackage(pkg)
+            // Block / re-intervention screens and the suggestion overlay sit on top of the app that
+            // triggered them and must not touch previousForegroundPackage (see same-app guard below).
+            // Chillpill's own main UI (notification tap, launcher) is a real destination though:
+            // going there *is* leaving the restricted app.
+            if (className in OWN_MAIN_UI_CLASSES) {
+                eventProcessorScope.launch {
+                    val prev = previousForegroundPackage
+                    if (prev != null && prev != pkg) BlockingSharedState.sessions.onLeft(prev)
+                    previousForegroundPackage = pkg
+                }
+            }
             return
         }
         eventProcessorScope.launch {
-            // Same-app check and processEvent run on single thread so previousForegroundPackage has no race
+            // Same-app check and processEvent run on single thread so previousForegroundPackage has no race.
+            // This also absorbs the second window event a restricted app fires (splash -> main)
+            // while our block screen is already up.
             if (pkg == previousForegroundPackage) {
                 Log.d(TAG, "onAccessibilityEvent: same app pkg=$pkg, skipping")
+                BlockingSharedState.setCurrentForegroundPackage(pkg)
+                return@launch
+            }
+            // Notification shade, volume/power dialogs and keyboards sit on top of the current app;
+            // while the user is legitimately inside it they are not "leaving" it and must not
+            // disturb previousForegroundPackage. Without a live session (block screen up, or a
+            // non-restricted app) the overlay behaves like any other app, so that e.g. block -> shade
+            // -> tap X notification re-evaluates X instead of hitting the same-app guard.
+            if (isOverlayWindow(pkg, className)) {
+                val prev = previousForegroundPackage
+                if (prev == null || BlockingSharedState.sessions.hasActiveSession(prev)) {
+                    Log.d(TAG, "onAccessibilityEvent: overlay pkg=$pkg over prev=$prev, ignoring")
+                    return@launch
+                }
+                Log.d(TAG, "onAccessibilityEvent: overlay pkg=$pkg, prev=$prev has no session; counting as foreground")
                 previousForegroundPackage = pkg
                 BlockingSharedState.setCurrentForegroundPackage(pkg)
                 return@launch
@@ -72,19 +184,21 @@ class ChillpillAccessibilityService : AccessibilityService() {
     }
 
     private suspend fun processEvent(pkg: String) {
+        val generation = screenOffGeneration
         try {
-            val restrictedPackages = withContext(Dispatchers.IO) {
-                app.restrictedAppsRepository.restrictedPackages.first()
+            val restrictedApps = withContext(Dispatchers.IO) {
+                app.restrictedAppsRepository.snapshot.first()
             }
-            val settings = withContext(Dispatchers.IO) {
-                app.settingsRepository.settings.first()
+            if (generation != screenOffGeneration) {
+                Log.d(TAG, "processEvent: screen went off while reading settings, dropping pkg=$pkg")
+                return
             }
-            val graceMs = settings.gracePeriodMinutes * 60L * 1000L
+            val restrictedPackages = restrictedApps.restricted
 
             Log.d(TAG, "processEvent: pkg=$pkg restrictedCount=${restrictedPackages.size} restricted=$restrictedPackages")
 
-            recordLeavingRestrictedApp(restrictedPackages, pkg, graceMs)
-            // GracePeriodService reads this when the timer expires to decide re-intervene vs set grace-expired flag
+            recordLeavingRestrictedApp(restrictedPackages, pkg)
+            // GracePeriodService reads this when the timer expires to decide re-intervene vs end the session
             BlockingSharedState.setCurrentForegroundPackage(pkg)
 
             // While our suggestion overlay is visible, ignore accessibility events to avoid
@@ -95,41 +209,77 @@ class ChillpillAccessibilityService : AccessibilityService() {
             }
 
             if (pkg !in restrictedPackages) {
-                handleNonRestrictedApp(pkg, graceMs)
+                handleNonRestrictedApp(pkg, generation)
                 return
             }
 
-            tryHandleGraceExpiredReIntervention(pkg)
-            if (BlockingSharedState.isInGracePeriod(pkg)) {
-                Log.d(TAG, "processEvent: pkg=$pkg in grace period, allowing")
-                setPreviousForeground(pkg)
+            val decision = BlockingSharedState.sessions.onEnterFromElsewhere(
+                pkg,
+                reInterventionDisabled = pkg in restrictedApps.reInterventionDisabled
+            )
+            if (decision == SessionPolicy.Decision.ALLOW) {
+                Log.d(TAG, "processEvent: pkg=$pkg in grace period or short-return window, allowing")
+                setPreviousForeground(pkg, generation)
                 return
             }
-            Log.d(TAG, "processEvent: showing block for pkg=$pkg (entering from elsewhere, grace expired)")
+            Log.d(TAG, "processEvent: showing block for pkg=$pkg (entering from elsewhere, no valid session)")
             handleEnteringRestrictedAppFromElsewhere(pkg)
 
-            setPreviousForeground(pkg)
+            setPreviousForeground(pkg, generation)
         } catch (t: Throwable) {
             Log.e(TAG, "processEvent failed for pkg=$pkg", t)
         }
     }
 
-    private fun recordLeavingRestrictedApp(restrictedPackages: Set<String>, newPackage: String, graceMs: Long) {
-        // Do not grant grace when switching to our block activity: user did not leave the app voluntarily
-        if (newPackage == applicationContext.packageName) return
-        if (BlockingSharedState.currentForegroundPackage == applicationContext.packageName) return
+    /**
+     * Notes the moment the user left a restricted app. This never grants or extends grace; it only
+     * feeds the short-return window of apps with re-intervention disabled, and only while that app
+     * has a live session. Showing a block ends the session, so leaving from a block screen (Home,
+     * back, recents) is a no-op regardless of the order in which window events arrived.
+     */
+    private fun recordLeavingRestrictedApp(restrictedPackages: Set<String>, newPackage: String) {
         previousForegroundPackage?.let { prev ->
             if (prev in restrictedPackages && prev != newPackage) {
-                BlockingSharedState.setGraceValidUntil(prev, System.currentTimeMillis() + graceMs)
+                BlockingSharedState.sessions.onLeft(prev)
             }
         }
     }
 
-    /** If grace expired while user was away, clear the flag so we fall through to the regular block screen (not re-intervention). */
-    private fun tryHandleGraceExpiredReIntervention(pkg: String): Boolean {
-        if (!BlockingSharedState.isGraceExpiredForPackage(pkg)) return false
-        BlockingSharedState.clearGraceExpiredForPackage(pkg)
-        return false
+    /**
+     * SystemUI (shade, volume, power menu, keyguard) and keyboard windows. Apps that ship a keyboard
+     * (SwiftKey, Grammarly, Samsung Keyboard, ...) also have real activities, so for IME packages only
+     * a window whose class is *not* one of the package's activities counts as an overlay.
+     * [className] null means "unknown window" (UsageStats lookup). Only call from eventProcessorScope.
+     */
+    private fun isOverlayWindow(pkg: String, className: String?): Boolean {
+        if (pkg == SYSTEM_UI_PACKAGE) return true
+        if (pkg !in enabledImePackages()) return false
+        return !isActivityOf(pkg, className)
+    }
+
+    private fun enabledImePackages(): Set<String> {
+        val now = SystemClock.elapsedRealtime()
+        if (imePackagesLoadedAtElapsed == 0L || now - imePackagesLoadedAtElapsed > IME_CACHE_MS) {
+            imePackages = try {
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.enabledInputMethodList?.mapNotNull { it.packageName }?.toSet() ?: emptySet()
+            } catch (t: Throwable) {
+                Log.e(TAG, "enabledImePackages: reading enabled input methods failed", t)
+                emptySet()
+            }
+            imePackagesLoadedAtElapsed = now
+        }
+        return imePackages
+    }
+
+    private fun isActivityOf(pkg: String, className: String?): Boolean {
+        if (className.isNullOrEmpty()) return false
+        return try {
+            packageManager.getActivityInfo(ComponentName(pkg, className), 0)
+            true
+        } catch (_: PackageManager.NameNotFoundException) {
+            false
+        }
     }
 
     private suspend fun handleEnteringRestrictedAppFromElsewhere(pkg: String) {
@@ -143,18 +293,25 @@ class ChillpillAccessibilityService : AccessibilityService() {
         startBlockActivity(pkg, isReIntervention = false)
     }
 
-    /** Updates local state for next event. Shared current-foreground is already set at start of processEvent. */
-    private fun setPreviousForeground(pkg: String) {
+    /**
+     * Updates local state for next event, unless the screen went off while this event was being
+     * processed (the receiver's reset must win). Shared current-foreground is already set at start of processEvent.
+     */
+    private fun setPreviousForeground(pkg: String, generation: Long) {
+        if (generation != screenOffGeneration) {
+            Log.d(TAG, "setPreviousForeground: screen went off meanwhile, not recording pkg=$pkg")
+            return
+        }
         previousForegroundPackage = pkg
     }
 
-    private suspend fun handleNonRestrictedApp(pkg: String, graceMs: Long) {
+    private suspend fun handleNonRestrictedApp(pkg: String, generation: Long) {
         Log.d(TAG, "processEvent: pkg not restricted, considering suggestion flow")
 
         // Never suggest for hardcoded excluded packages.
         if (pkg in ExcludedApps.EXCLUDED_PACKAGES) {
             Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg is in hardcoded exclusion list, allowing without suggestion")
-            setPreviousForeground(pkg)
+            setPreviousForeground(pkg, generation)
             return
         }
 
@@ -162,12 +319,12 @@ class ChillpillAccessibilityService : AccessibilityService() {
         val hasLauncherActivity = applicationContext.packageManager.getLaunchIntentForPackage(pkg) != null
         if (!hasLauncherActivity) {
             Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg has no launcher activity, skipping suggestion")
-            setPreviousForeground(pkg)
+            setPreviousForeground(pkg, generation)
             return
         }
 
         if (app.appOpenTracker.wasSuggestionShown(pkg)) {
-            setPreviousForeground(pkg)
+            setPreviousForeground(pkg, generation)
             return
         }
         val foregroundMs = try {
@@ -176,13 +333,13 @@ class ChillpillAccessibilityService : AccessibilityService() {
             }
         } catch (t: Throwable) {
             Log.e(TAG, "handleNonRestrictedApp: queryForegroundTimeMs failed for pkg=$pkg", t)
-            setPreviousForeground(pkg)
+            setPreviousForeground(pkg, generation)
             return
         }
         val foregroundMinutes = foregroundMs / 60_000L
         Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg foregroundMinutes=$foregroundMinutes in last 12h")
         if (foregroundMinutes < SUGGESTION_THRESHOLD_MINUTES) {
-            setPreviousForeground(pkg)
+            setPreviousForeground(pkg, generation)
             return
         }
 
@@ -197,12 +354,12 @@ class ChillpillAccessibilityService : AccessibilityService() {
             }
         } catch (t: Throwable) {
             Log.e(TAG, "handleNonRestrictedApp: suggestionRepository read failed pkg=$pkg", t)
-            setPreviousForeground(pkg)
+            setPreviousForeground(pkg, generation)
             return
         }
         Log.d(TAG, "handleNonRestrictedApp: pkg=$pkg isIgnored=$isIgnored isPermanentlyExcluded=$isPermanentlyExcluded")
         if (isIgnored || isPermanentlyExcluded) {
-            setPreviousForeground(pkg)
+            setPreviousForeground(pkg, generation)
             return
         }
 
@@ -221,10 +378,9 @@ class ChillpillAccessibilityService : AccessibilityService() {
                             app.suggestionRepository.removeIgnored(pkg)
                             app.appOpenTracker.clearSuggestionShown(pkg)
 
-                            BlockingSharedState.setGraceValidUntil(
-                                pkg,
-                                System.currentTimeMillis() + graceMs
-                            )
+                            // Read grace at tap time so a settings change made while the popup was up is honoured.
+                            val graceMs = app.settingsRepository.settings.first().gracePeriodMinutes * 60L * 1000L
+                            BlockingSharedState.sessions.startSession(pkg, graceMs)
                             startGracePeriodService(pkg)
                         } catch (t: Throwable) {
                             Log.e(TAG, "suggestion onRestrict failed pkg=$pkg", t)
@@ -278,7 +434,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
             )
             app.appOpenTracker.clearSuggestionShown(pkg)
         }
-        setPreviousForeground(pkg)
+        setPreviousForeground(pkg, generation)
     }
 
     private fun queryForegroundTimeMs(pkg: String, windowMs: Long): Long {
@@ -355,6 +511,13 @@ class ChillpillAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "ChillpillA11y"
+        private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
+        /** Our activities that are destinations in their own right, as opposed to block/overlay UI. */
+        private val OWN_MAIN_UI_CLASSES = setOf(
+            MainActivity::class.java.name,
+            ChillpillSettingsActivity::class.java.name
+        )
+        private const val IME_CACHE_MS = 5L * 60L * 1000L
         private const val SUGGESTION_WINDOW_MS = 12L * 60L * 60L * 1000L // 12 hours
         // Cumulative foreground time across the whole SUGGESTION_WINDOW_MS window, not "this sitting" —
         // an app already used for 30+ min earlier today will trigger the suggestion almost immediately

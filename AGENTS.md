@@ -8,7 +8,7 @@ Chillpill is a single-module Android app (Kotlin, Jetpack Compose, `:app`, packa
 `com.chillpill`) that reduces screen time: an AccessibilityService intercepts launches of
 user-chosen "restricted" apps, shows a block screen with a wait timer, then grants a
 time-limited grace period tracked by a foreground service. All data is local (DataStore +
-Room). No network layer, no DI framework, no tests yet.
+Room). No network layer, no DI framework. Unit tests exist only for the pure `SessionPolicy`.
 
 ## Where context lives (load in this order, only as needed)
 
@@ -60,7 +60,7 @@ Gradle wrapper is checked in. On Windows use `gradlew.bat` instead of `./gradlew
 ./gradlew assembleDebug          # build
 ./gradlew installDebug           # install on the connected device/emulator
 ./gradlew lintDebug              # Android lint
-./gradlew testDebugUnitTest      # unit tests (none exist yet — add under app/src/test)
+./gradlew testDebugUnitTest      # unit tests (app/src/test; only SessionPolicyTest so far)
 ```
 
 Release signing reads `keystore.properties` from the repo root (never committed). If it is
@@ -76,13 +76,17 @@ them manually, or leave the verification step for the human.
 
 - `ChillpillAccessibilityService` processes events on a single-threaded scope
   (`Dispatchers.Default.limitedParallelism(1)`). Keep it that way; ordering matters.
-- Events from Chillpill's own package (block screen, re-intervention, overlay) are
-  filtered before `processEvent` so they don't reset the same-app guard. Breaking this
-  causes double block screens on splash → main transitions.
-- Leaving a restricted app for a *different* app refreshes its full grace window. The
-  grace service polls `BlockingSharedState.isInGracePeriod(pkg)` every second instead of
-  running a fixed countdown precisely so this refresh is honoured. Don't replace the
-  polling with a fixed delay.
+- Events from Chillpill's block screen, re-intervention and overlay are filtered before
+  `processEvent` so they don't reset the same-app guard. Breaking this causes double
+  block screens on splash → main transitions. Only `MainActivity` /
+  `ChillpillSettingsActivity` events count as leaving the previous app.
+- Leaving a restricted app never extends grace. Grace is fixed at Continue
+  (`SessionPolicy`); `onLeft` only timestamps the exit for the 10 s return window of
+  apps with "Block again after grace" off. Do not reintroduce "leaving refreshes grace":
+  it let those apps skip the block forever (see `specs/no-reblock-apps-session-fix.md`).
+- SystemUI and keyboard windows are ignored only while the previous app has a live
+  session (`sessions.hasActiveSession`). With no session (block screen up) they count as
+  a foreground change, otherwise shade → tap-notification bypasses the block.
 - `GracePeriodService` keeps one job per package (`graceJobs`). Starting grace for app B
   must not cancel app A's job.
 - `BlockingSharedState` (in-memory `object` in `service/`) is the live cross-service

@@ -11,6 +11,11 @@ import kotlinx.coroutines.flow.map
 
 private val Context.restrictedAppsDataStore: DataStore<Preferences> by preferencesDataStore(name = "restricted_apps")
 
+data class RestrictedAppsSnapshot(
+    val restricted: Set<String>,
+    val reInterventionDisabled: Set<String>
+)
+
 class RestrictedAppsRepository(private val context: Context) {
 
     private object Keys {
@@ -24,6 +29,14 @@ class RestrictedAppsRepository(private val context: Context) {
 
     val reInterventionDisabledPackages: Flow<Set<String>> = context.restrictedAppsDataStore.data.map { prefs ->
         prefs[Keys.RE_INTERVENTION_DISABLED] ?: emptySet()
+    }
+
+    /** Both sets from one DataStore read, so a caller that needs both sees a consistent version. */
+    val snapshot: Flow<RestrictedAppsSnapshot> = context.restrictedAppsDataStore.data.map { prefs ->
+        RestrictedAppsSnapshot(
+            restricted = prefs[Keys.PACKAGE_NAMES] ?: emptySet(),
+            reInterventionDisabled = prefs[Keys.RE_INTERVENTION_DISABLED] ?: emptySet()
+        )
     }
 
     suspend fun setRestricted(packageNames: Set<String>) {

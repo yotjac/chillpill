@@ -1,15 +1,13 @@
 package com.chillpill.service
 
-import android.util.Log
-import java.util.concurrent.ConcurrentHashMap
+import android.os.SystemClock
 
 /**
  * Shared in-memory state between ChillpillAccessibilityService and GracePeriodService.
  * - currentForegroundPackage: written by AccessibilityService on app transitions; read by GracePeriodService on expiry.
- * - graceValidUntilMillis: "in grace" window per package; written when user leaves app or when grace timer starts (Continue).
- * - graceExpiredForPackages: set of packages whose grace expired while not in the foreground (GracePeriodService adds;
- *   AccessibilityService removes on next open of that package). A set rather than a single field so that grace expiring
- *   while-away for one restricted app doesn't clobber the same bookkeeping for another restricted app.
+ * - sessions: per-package session/grace bookkeeping ([SessionPolicy]). Grace is fixed when the user passes the block
+ *   (Continue / suggestion "Restrict"); leaving an app never extends it. Apps with re-intervention disabled may
+ *   additionally return within [SessionPolicy.RETURN_WINDOW_MS] of leaving without a new block.
  */
 object BlockingSharedState {
 
@@ -17,47 +15,21 @@ object BlockingSharedState {
     var currentForegroundPackage: String? = null
         private set
 
-    private val graceValidUntilMillis = ConcurrentHashMap<String, Long>()
-
-    private val graceExpiredForPackages: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    /** Session + grace decisions; thread-safe. */
+    val sessions = SessionPolicy(
+        wallClock = System::currentTimeMillis,
+        elapsedClock = SystemClock::elapsedRealtime
+    )
 
     fun setCurrentForegroundPackage(packageName: String?) {
         currentForegroundPackage = packageName
     }
 
-    /** True if the package is currently within its grace window (recently left or post-Continue timer). */
-    fun isInGracePeriod(packageName: String): Boolean {
-        val validUntil = graceValidUntilMillis[packageName] ?: 0L
-        val now = System.currentTimeMillis()
-        val inGrace = validUntil > now
-        if (validUntil != 0L) {
-            Log.d(DEBUG_TAG, "isInGracePeriod: pkg=$packageName validUntil=$validUntil now=$now inGrace=$inGrace")
-        }
-        return inGrace
-    }
+    /** True if the package is currently within the grace window that started at its last Continue. */
+    fun isInGracePeriod(packageName: String): Boolean = sessions.isInGracePeriod(packageName)
 
-    /** Set grace valid until this timestamp (e.g. when user leaves app or when Continue timer starts). */
-    fun setGraceValidUntil(packageName: String, validUntilMillis: Long) {
-        graceValidUntilMillis[packageName] = validUntilMillis
-    }
-
-    /** Clear grace for this package (e.g. when grace timer expires). */
+    /** Clear grace for this package when its grace timer expires. The session itself stays (see [SessionPolicy]). */
     fun clearGraceForPackage(packageName: String) {
-        graceValidUntilMillis.remove(packageName)
+        sessions.clearGrace(packageName)
     }
-
-    /** Mark [packageName]'s grace as having expired while the user was away from it. */
-    fun setGraceExpiredForPackage(packageName: String) {
-        graceExpiredForPackages.add(packageName)
-    }
-
-    /** True if [packageName]'s grace previously expired while away and hasn't been acknowledged yet. */
-    fun isGraceExpiredForPackage(packageName: String): Boolean = packageName in graceExpiredForPackages
-
-    /** Acknowledge/clear the "grace expired while away" flag for this package only. */
-    fun clearGraceExpiredForPackage(packageName: String) {
-        graceExpiredForPackages.remove(packageName)
-    }
-
-    private const val DEBUG_TAG = "BlockingSharedState"
 }

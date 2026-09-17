@@ -7,6 +7,11 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- Needed so InputMethodManager.enabledInputMethodList returns every enabled keyboard,
+             not only the current one (package visibility filtering, API 30+). -->
+        <intent>
+            <action android:name="android.view.InputMethod" />
+        </intent>
     </queries>
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

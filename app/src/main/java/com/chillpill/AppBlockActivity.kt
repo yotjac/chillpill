@@ -30,6 +30,9 @@ class AppBlockActivity : ComponentActivity() {
 
     private val viewModel: AppBlockViewModel by viewModels { factory }
 
+    /** True once Continue / Go Home / back started navigating away (see onUserLeaveHint). */
+    private var leavingByButton = false
+
     private val factory: ViewModelProvider.Factory get() {
         return object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -82,7 +85,7 @@ class AppBlockActivity : ComponentActivity() {
         }
 
         setContent {
-            BackHandler { goHomeAndFinish() }
+            BackHandler { viewModel.onGoHome() }
             ChillpillTheme {
                 val phase by viewModel.phase.collectAsStateWithLifecycle()
                 val progress by viewModel.progress.collectAsStateWithLifecycle()
@@ -107,6 +110,7 @@ class AppBlockActivity : ComponentActivity() {
      */
     private fun launchTargetAppAndFinish() {
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: return
+        leavingByButton = true
         startGracePeriodService(packageName)
         try {
             val launchIntent = buildLaunchIntentForPackage(packageName)
@@ -154,6 +158,7 @@ class AppBlockActivity : ComponentActivity() {
     }
 
     private fun goHomeAndFinish() {
+        leavingByButton = true
         startActivity(
             Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_HOME)
@@ -166,7 +171,10 @@ class AppBlockActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         Log.d(TAG, "onUserLeaveHint: user left, finishing")
-        viewModel.recordDismissedViaSystemGesture()
+        // Continue / Go Home / Back also trigger onUserLeaveHint (we start another activity); those
+        // paths go through the view model and record their own events, so only count genuine
+        // system-gesture dismissals here.
+        if (!leavingByButton) viewModel.recordDismissedViaSystemGesture()
         finish()
     }
 
