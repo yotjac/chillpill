@@ -93,4 +93,22 @@ class AppBlockViewModel(
             _events.send(AppBlockEvent.RequestGoHome)
         }
     }
+
+    /**
+     * Records that the block/re-intervention screen was dismissed by a system gesture
+     * (e.g. swipe-to-recents, notification shade) rather than the explicit "Go Home" button.
+     * The activity is already finishing on its own via onUserLeaveHint by the time this is
+     * called, so this only records the LEFT_APP event for stats accuracy; it does not emit a
+     * navigation event (no RequestGoHome), since the OS is already handling where focus goes.
+     */
+    fun recordDismissedViaSystemGesture() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                app.usageEventsRepository.recordEvent(
+                    packageName = packageName,
+                    eventType = UsageEventType.LEFT_APP
+                )
+            }
+        }
+    }
 }

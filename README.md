@@ -10,7 +10,7 @@ Chillpill helps you reduce usage of chosen apps by:
 - Allowing a time-limited "grace period" per session after the wait
 - Showing a block screen when you try to open a restricted app (or when the grace period has expired)
 
-See the [design document](specs/chillpill-design.md) for architecture, data model, and flows.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for architecture, data model, and flows, and [AGENTS.md](AGENTS.md) for how to work in this repo (humans and AI agents).
 
 ## Requirements
 
@@ -39,6 +39,8 @@ Or open the project in Android Studio (File → Open → select the project fold
 
 - `app/` — Application module (UI, data, navigation)
 - `specs/` — Design and feature specs (spec-first workflow)
+- `.agents/skills/` — task-specific skills for AI agents
+- `docs/plans/` — historical implementation plans
 
 ## License
 

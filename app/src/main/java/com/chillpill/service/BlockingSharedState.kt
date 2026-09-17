@@ -6,8 +6,10 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Shared in-memory state between ChillpillAccessibilityService and GracePeriodService.
  * - currentForegroundPackage: written by AccessibilityService on app transitions; read by GracePeriodService on expiry.
- * - graceValidUntilMillis: "in grace" window per package; written when user leaves app or when grace timer starts (Continue); read to decide show block vs allow.
- * - graceExpiredForPackage: set by GracePeriodService when grace expires and app is not in foreground; read by AccessibilityService on next open.
+ * - graceValidUntilMillis: "in grace" window per package; written when user leaves app or when grace timer starts (Continue).
+ * - graceExpiredForPackages: set of packages whose grace expired while not in the foreground (GracePeriodService adds;
+ *   AccessibilityService removes on next open of that package). A set rather than a single field so that grace expiring
+ *   while-away for one restricted app doesn't clobber the same bookkeeping for another restricted app.
  */
 object BlockingSharedState {
 
@@ -17,9 +19,7 @@ object BlockingSharedState {
 
     private val graceValidUntilMillis = ConcurrentHashMap<String, Long>()
 
-    @Volatile
-    var graceExpiredForPackage: String? = null
-        private set
+    private val graceExpiredForPackages: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     fun setCurrentForegroundPackage(packageName: String?) {
         currentForegroundPackage = packageName
@@ -46,14 +46,17 @@ object BlockingSharedState {
         graceValidUntilMillis.remove(packageName)
     }
 
-    fun setGraceExpiredForPackage(packageName: String?) {
-        graceExpiredForPackage = packageName
+    /** Mark [packageName]'s grace as having expired while the user was away from it. */
+    fun setGraceExpiredForPackage(packageName: String) {
+        graceExpiredForPackages.add(packageName)
     }
 
+    /** True if [packageName]'s grace previously expired while away and hasn't been acknowledged yet. */
+    fun isGraceExpiredForPackage(packageName: String): Boolean = packageName in graceExpiredForPackages
+
+    /** Acknowledge/clear the "grace expired while away" flag for this package only. */
     fun clearGraceExpiredForPackage(packageName: String) {
-        if (graceExpiredForPackage == packageName) {
-            graceExpiredForPackage = null
-        }
+        graceExpiredForPackages.remove(packageName)
     }
 
     private const val DEBUG_TAG = "BlockingSharedState"

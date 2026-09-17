@@ -127,9 +127,8 @@ class ChillpillAccessibilityService : AccessibilityService() {
 
     /** If grace expired while user was away, clear the flag so we fall through to the regular block screen (not re-intervention). */
     private fun tryHandleGraceExpiredReIntervention(pkg: String): Boolean {
-        val expiredPkg = BlockingSharedState.graceExpiredForPackage ?: return false
-        if (expiredPkg != pkg) return false
-        BlockingSharedState.setGraceExpiredForPackage(null)
+        if (!BlockingSharedState.isGraceExpiredForPackage(pkg)) return false
+        BlockingSharedState.clearGraceExpiredForPackage(pkg)
         return false
     }
 
@@ -357,6 +356,9 @@ class ChillpillAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "ChillpillA11y"
         private const val SUGGESTION_WINDOW_MS = 12L * 60L * 60L * 1000L // 12 hours
-        private const val SUGGESTION_THRESHOLD_MINUTES = 1L
+        // Cumulative foreground time across the whole SUGGESTION_WINDOW_MS window, not "this sitting" —
+        // an app already used for 30+ min earlier today will trigger the suggestion almost immediately
+        // on a later, brief reopen (as soon as AppOpenTracker's per-process dedupe allows it again).
+        private const val SUGGESTION_THRESHOLD_MINUTES = 30L
     }
 }

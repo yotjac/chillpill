@@ -158,6 +158,7 @@ class ReInterventionActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         Log.d(TAG, "onUserLeaveHint: user left, finishing")
+        viewModel.recordDismissedViaSystemGesture()
         finish()
     }
 

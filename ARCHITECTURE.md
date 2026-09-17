@@ -13,9 +13,13 @@ configurable wait timer. After the timer completes, the user may either go home 
 continue into the app with a time-limited **grace period**. When the grace period expires
 the block screen reappears.
 
-Additionally, when the user opens a **non-restricted** app and has used it for more than
-20 minutes in the last 12 hours, ChillPill proactively shows a **suggestion popup** asking
-whether to restrict that app. The user can accept, ignore (7-day cooldown), or permanently dismiss the
+Additionally, when the user opens a **non-restricted** app and has accumulated more than
+30 minutes of foreground time for it in the last 12 hours (across any number of separate
+sessions, not 30 continuous minutes), ChillPill proactively shows a **suggestion popup**
+asking whether to restrict that app. Because the 30 minutes is a rolling 12-hour total, an
+app you already used a lot earlier in the day can trigger the popup within seconds of a
+brief later reopen — this is expected, not a bug, but is easy to misread as "popped up
+almost instantly." The user can accept, ignore (7-day cooldown), or permanently dismiss the
 suggestion for that app.
 
 Key concepts:
@@ -26,7 +30,7 @@ Key concepts:
 | **Wait time** | Seconds the user must wait on the block screen (default 12, range 1–7200) |
 | **Grace period** | Minutes the user can use the app after waiting (default 5, range 1–1440) |
 | **Re-intervention** | A second block shown when the grace period expires while the user is still in the restricted app; can be toggled per restricted app |
-| **Suggestion popup** | A dialog shown when a non-restricted, non-excluded app is opened and has >20 min foreground time in the last 12 h; offers to restrict it |
+| **Suggestion popup** | A dialog shown when a non-restricted, non-excluded app is opened and has accumulated >30 min of foreground time in the last 12 h (cumulative, not a single sitting); offers to restrict it |
 | **Excluded app** | An app that never triggers a suggestion popup — either hardcoded (browsers, utilities, etc.) or user-chosen via "Never ask me again about [app name]" |
 
 ---
@@ -184,7 +188,7 @@ repository properties. No Hilt, Dagger, or Koin.
 ### 5.1 SettingsRepository (DataStore)
 
 - **Store name:** `"settings"`
-- **Keys:** `wait_time_seconds` (Int, default 30), `grace_period_minutes` (Int, default 5), `setup_completed` (Boolean)
+- **Keys:** `wait_time_seconds` (Int, default 12), `grace_period_minutes` (Int, default 5), `setup_completed` (Boolean)
 - **Exposed flows:** `settings: Flow<Settings>`, `setupCompleted: Flow<Boolean>`
 - **Write methods:** `setWaitTimeSeconds`, `setGracePeriodMinutes`, `setSettings`, `setSetupCompleted`
 
@@ -232,8 +236,8 @@ repository properties. No Hilt, Dagger, or Koin.
 
 In-memory set of package names for which the suggestion dialog has already been shown in the
 current process. Used to avoid showing the suggestion popup multiple times in rapid
-succession for the same app. Suggestion eligibility (e.g. >20 min foreground in 12 h) is
-computed via **UsageStatsManager** in the accessibility service.
+succession for the same app. Suggestion eligibility (>30 min cumulative foreground time in
+the last 12 h) is computed via **UsageStatsManager** in the accessibility service.
 
 | Method | Purpose |
 |--------|---------|
@@ -273,10 +277,15 @@ An `object` that coordinates between the accessibility service and the grace-per
 |-------|------|---------|
 | `currentForegroundPackage` | `String?` | Last foreground package set by the a11y service |
 | `graceValidUntilMillis` | `MutableMap<String, Long>` | Per-package grace expiry timestamp |
-| `graceExpiredForPackage` | `String?` | Package whose grace expired while user was away; cleared when they open that app again (they then see the regular block screen) |
+| `graceExpiredForPackages` | `MutableSet<String>` | Packages whose grace expired while the user was away; a package is removed from the set when the user opens that app again (they then see the regular block screen) |
 
 Key methods: `isInGracePeriod(pkg)`, `setGraceValidUntil(pkg, millis)`,
-`clearGraceForPackage(pkg)`, `setGraceExpiredForPackage(pkg)`.
+`clearGraceForPackage(pkg)`, `setGraceExpiredForPackage(pkg)`, `isGraceExpiredForPackage(pkg)`,
+`clearGraceExpiredForPackage(pkg)`.
+
+> `graceExpiredForPackages` is a **set**, not a single field, precisely so that grace expiring
+> while-away for one restricted app can't overwrite the same bookkeeping for a second restricted
+> app whose grace expires around the same time.
 
 ### 6.2 ChillpillAccessibilityService
 
@@ -284,24 +293,30 @@ Key methods: `isInGracePeriod(pkg)`, `setGraceValidUntil(pkg, millis)`,
 - Maintains a single-threaded coroutine scope (`Dispatchers.Default.limitedParallelism(1)`)
 - Decision flow on detecting a foreground change:
   1. If package **is** restricted:
-     a. If `graceExpiredForPackage` matches → clear the flag (user is returning after grace expired while away); then fall through so they see the **regular block** screen, not re-intervention
+     a. If `pkg` is in `graceExpiredForPackages` → remove it (user is returning after grace expired while away); then fall through so they see the **regular block** screen, not re-intervention
      b. If package is in grace period → allow
      c. Otherwise → record `OPEN_ATTEMPT`, start `AppBlockActivity`
   2. If package is **not** restricted → `handleNonRestrictedApp`:
      a. Skip if in `ExcludedApps.EXCLUDED_PACKAGES`
      b. Skip if the package has no launcher activity (`getLaunchIntentForPackage == null`)
-     c. If not already suggested this session, query **UsageStatsManager** for foreground time of this package in the last 12 h; if ≥20 min, not ignored, not permanently excluded → show suggestion via `SuggestionOverlayManager`
+     c. If not already suggested this session, query **UsageStatsManager** for cumulative foreground time of this package in the last 12 h; if ≥30 min, not ignored, not permanently excluded → show suggestion via `SuggestionOverlayManager`
 - **Self-package event filtering:** Events from the app's own package (e.g. when `AppBlockActivity` / `ReInterventionActivity` is shown, or when the suggestion overlay is visible) are handled before dispatching to `processEvent`: only `BlockingSharedState.currentForegroundPackage` is updated; `previousForegroundPackage` is left unchanged. This prevents the block screen from "resetting" the same-app guard, so when the restricted app fires a second `TYPE_WINDOW_STATE_CHANGED` during launch (e.g. splash-to-main transition), the service correctly treats it as the same app and does not show the block screen again. When the user taps "Go Home" from the block screen, `recordLeavingRestrictedApp` skips granting grace if `currentForegroundPackage` is the app's own package (user did not voluntarily leave the restricted app).
+- **Leaving a restricted app refreshes its grace period.** Any time `recordLeavingRestrictedApp` sees a transition away from a restricted app to a genuinely different app (i.e. not our own block/overlay UI), it grants a **fresh full grace window** for the app being left, regardless of how much of any earlier grace window remained. In practice this means a user who occasionally switches away from a restricted app and back can keep it out of grace-expiry for much longer than one configured grace period. This is intentional (it treats "voluntarily switching away and back" like a fresh dismissal), but the previously-running `GracePeriodService` timer needs to know about it — see 6.3.
+- Dismissing `AppBlockActivity` / `ReInterventionActivity` via a system gesture (`onUserLeaveHint` — e.g. swipe-to-recents, pulling the notification shade) records a `LEFT_APP` event for stats accuracy, the same as tapping "Go Home" explicitly, but does **not** force-navigate anywhere; the OS is already handling where focus goes.
 - Starts `GracePeriodService` when the user taps "Continue" on the block screen, or when the user taps "Restrict App" in the suggestion popup (so they can continue into the app without seeing the block screen that first time).
 
 ### 6.3 GracePeriodService (Foreground Service)
 
-- Started by `AppBlockActivity` or `ReInterventionActivity` when the user taps "Continue" (initial block or re-intervention). This guarantees the grace timer runs after every block dismissal.
-- Shows an ongoing notification with a countdown
-- On expiry, determines whether the user is still in the restricted app via **UsageStatsManager** (`queryEvents` over the last 10 minutes to capture the most recent `ACTIVITY_RESUMED` event), falling back to `BlockingSharedState.currentForegroundPackage` if usage-stats query fails:
-  - If user is still in the restricted app → records `GRACE_EXPIRED_WHILE_ACTIVE`, starts `ReInterventionActivity` (re-intervention **only** happens at this moment)
-  - If user navigated away → records `GRACE_EXPIRED_WHILE_AWAY`, sets `BlockingSharedState.graceExpiredForPackage`; when they later open that app again, the accessibility service clears the flag and shows the **regular** block screen
-- Uses `serviceScope` on `Dispatchers.Main.immediate`
+- Started by `AppBlockActivity` or `ReInterventionActivity` when the user taps "Continue" (initial block or re-intervention), or by `ChillpillAccessibilityService` when the user taps "Restrict App" in the suggestion popup. This guarantees a grace timer runs after every block dismissal / new restriction.
+- Shows a single ongoing notification while any grace window is being monitored.
+- **Monitors one coroutine job per restricted package** (keyed in an internal `graceJobs` map), so grace for multiple restricted apps can be tracked concurrently — starting grace for App B no longer cancels or silently stops monitoring App A's grace. Starting grace again for the *same* package (e.g. re-intervention's "Keep using the app") cancels only that package's own prior job before starting a new one.
+- Each job does **not** run a fixed local countdown. Instead it polls `BlockingSharedState.isInGracePeriod(pkg)` (checked once per second) and only calls `onGraceExpired` once that returns false. Because "leaving a restricted app refreshes its grace period" (6.2) can push a package's actual expiry later after the job started, this polling approach means the job naturally keeps waiting instead of firing re-intervention against a stale, already-superseded expiry time.
+- `serviceScope` uses a `SupervisorJob` plus a `CoroutineExceptionHandler` (mirroring `ChillpillAccessibilityService`'s `eventProcessorScope`), so an uncaught failure while monitoring one package's grace is logged rather than silently killing every other package's grace-monitoring job or crashing the process.
+- On expiry for a given package, determines whether the user is still in that app via **UsageStatsManager** (`queryEvents` over the last 10 minutes, tracking `ACTIVITY_RESUMED`/`ACTIVITY_PAUSED` pairs so a package that resumed and then paused — e.g. the screen was locked — is correctly treated as *not* currently foreground), falling back to `BlockingSharedState.currentForegroundPackage` if the usage-stats query is inconclusive:
+  - If **re-intervention is disabled** for that package (`RestrictedAppsRepository.reInterventionDisabledPackages`) → records `GRACE_EXPIRED_WHILE_ACTIVE`/`GRACE_EXPIRED_WHILE_AWAY` (whichever matches) and stops; no block or re-intervention screen is shown, and the user is not re-blocked until they next leave and re-enter the app.
+  - Else, if user is still in the restricted app → records `GRACE_EXPIRED_WHILE_ACTIVE`, starts `ReInterventionActivity` (re-intervention **only** happens at this moment)
+  - Else, if user navigated away → records `GRACE_EXPIRED_WHILE_AWAY`, adds the package to `BlockingSharedState.graceExpiredForPackages`; when they later open that app again, the accessibility service removes it from the set and shows the **regular** block screen
+- The service stops itself (`stopSelf()`) once its `graceJobs` map is empty, i.e. no package is currently being monitored.
 
 ### Service ↔ Activity Data Flow
 
@@ -312,7 +327,7 @@ User opens restricted app
         │
         ▼
 ChillpillAccessibilityService
-   ├── If graceExpiredForPackage == pkg: clear flag (user returning after grace expired while away)
+   ├── If pkg is in graceExpiredForPackages: remove it (user returning after grace expired while away)
    ├── If in grace period: allow
    ├── Else: record OPEN_ATTEMPT, start AppBlockActivity (never ReInterventionActivity from here)
    └── Updates BlockingSharedState.currentForegroundPackage
@@ -322,26 +337,31 @@ AppBlockActivity / AppBlockViewModel  (initial block only from a11y service)
    ├── Runs wait timer (from SettingsRepository.waitTimeSeconds)
    ├── On "Continue": records WAIT_COMPLETED, sets grace in BlockingSharedState,
    │   starts GracePeriodService, launches target app, finishes
-   └── On "Go Home": records LEFT_APP, finishes
+   ├── On "Go Home": records LEFT_APP, finishes
+   └── On system-gesture dismissal (onUserLeaveHint): records LEFT_APP (stats only), finishes — no forced navigation
         │
         ▼ (if user continued)
 GracePeriodService
-   ├── Reads grace duration from SettingsRepository
-   ├── Shows notification countdown
-   └── On expiry: queries UsageStatsManager for actual foreground app;
-       if user still in app → start ReInterventionActivity (only place re-intervention is shown);
-       if user left → record GRACE_EXPIRED_WHILE_AWAY, set graceExpiredForPackage (next open gets regular block)
+   ├── Starts (or restarts) a monitoring job for this specific package; other packages'
+   │   jobs are unaffected
+   ├── Shows/updates the shared ongoing notification
+   ├── Polls BlockingSharedState.isInGracePeriod(pkg) every second rather than running a
+   │   fixed countdown, so a grace refresh from leaving-and-returning (see above) is honored
+   └── On expiry: queries UsageStatsManager for actual foreground app (pause-aware);
+       if re-intervention disabled for pkg → record event only, no screen shown;
+       else if user still in app → start ReInterventionActivity (only place re-intervention is shown);
+       else if user left → record GRACE_EXPIRED_WHILE_AWAY, add pkg to graceExpiredForPackages (next open gets regular block)
 ```
 
 #### Suggestion flow (non-restricted apps)
 
 ```
-User opens non-restricted app (>20 min foreground in last 12 h)
+User opens non-restricted app (>30 min cumulative foreground time in last 12 h)
         │
         ▼
 ChillpillAccessibilityService.handleNonRestrictedApp()
    ├── Checks: not in ExcludedApps, has launcher activity,
-   │   foreground time (UsageStatsManager) ≥ 20 min in last 12 h,
+   │   cumulative foreground time (UsageStatsManager) ≥ 30 min in last 12 h,
    │   not already suggested this session, not ignored/permanently excluded
    └── Shows suggestion via SuggestionOverlayManager (accessibility overlay)
         │
@@ -459,7 +479,7 @@ installed apps).
 |---------------------|-------|-----|
 | `viewModelScope` | All ViewModels | Standard lifecycle-aware coroutine scope |
 | `eventProcessorScope` (`Dispatchers.Default.limitedParallelism(1)`) | `ChillpillAccessibilityService` | Serialized event processing to avoid race conditions |
-| `serviceScope` (`Dispatchers.Main.immediate + SupervisorJob`) | `GracePeriodService` | Main-thread scope for the foreground service |
+| `serviceScope` (`Dispatchers.Main.immediate + SupervisorJob` + `CoroutineExceptionHandler`) | `GracePeriodService` | Parent scope for the service; each package's grace-monitoring job is launched on `Dispatchers.Default` from here (kept in a `graceJobs: Map<String, Job>`) so one package's failure or cancellation can't affect another's |
 | `CoroutineScope(Dispatchers.IO)` | `AppBlockActivity` | Collecting one-shot ViewModel events |
 
 Room allows main-thread queries (`allowMainThreadQueries()`) and uses
