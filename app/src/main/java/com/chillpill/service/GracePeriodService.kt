@@ -18,11 +18,13 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
@@ -39,8 +41,15 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * Rather than counting down a local duration, each job polls the authoritative deadline held in
  * [BlockingSharedState] (`isInGracePeriod`). That deadline is fixed when the user taps Continue
- * (leaving the app does not extend it); it only moves if the user passes a block again, which
- * also restarts this package's job.
+ * (leaving the app does not extend it); it only moves if the user passes a block again. Because the
+ * job reads the deadline on every tick, a second start for a package that is already being
+ * monitored does not replace its job: the existing one simply follows the new deadline.
+ *
+ * Invariant: **a package is never left with a valid grace window and no job watching it.** Such a
+ * package would be allowed back in forever (`SessionPolicy.onEnterFromElsewhere` sees grace as
+ * valid) and never kicked out. Every path that can lose a job — a stop racing a newer start, the
+ * system or the user stopping the service, `startForeground` failing — therefore either keeps the
+ * job alive or ends the package's session so the next open shows the regular block.
  */
 class GracePeriodService : Service() {
 
@@ -56,16 +65,23 @@ class GracePeriodService : Service() {
     )
 
     /**
-     * Number of [startGraceTimer] calls that have not yet registered their job. A job being
-     * cancelled to make room for its replacement runs its `finally` on a background thread, which
-     * can happen before the replacement lands in [graceJobs]; without this counter it would see an
-     * empty map and `stopSelf()`, and the service's destruction would cancel the replacement job —
-     * leaving an app whose grace never expires and which never warns.
+     * Number of [startGraceTimer] calls that have not yet registered their job. A job finishing on a
+     * background thread while `onStartCommand` for another package is running on the main thread
+     * must not see an empty map and stop the service out from under the new job.
      */
     private val startsInFlight = AtomicInteger(0)
 
-    /** One monitoring job per package currently in grace. Guarded by identity-checked removal to avoid a
-     * restart racing with the previous job's own cleanup (see startGraceTimer). */
+    /**
+     * The most recent `startId` handed to [onStartCommand]. Every stop goes through
+     * [stopSelf] with this id: Android then ignores the stop if a newer start has been delivered to
+     * (or is queued for) this instance. A plain `stopSelf()` has no such guard — it tears the
+     * service down together with the job that newer start just launched, leaving that package
+     * in grace with nobody watching it.
+     */
+    @Volatile
+    private var lastStartId = -1
+
+    /** One monitoring job per package currently in grace. */
     private val graceJobs = ConcurrentHashMap<String, Job>()
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -73,27 +89,38 @@ class GracePeriodService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START, ACTION_RESUME -> {
-                val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: return START_NOT_STICKY
-                startGraceTimer(packageName)
+                val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME)
+                if (packageName == null) {
+                    lastStartId = startId
+                    stopIfIdle()
+                    return START_NOT_STICKY
+                }
+                startGraceTimer(packageName, startId)
             }
-            else -> { /* ignore */ }
+            else -> {
+                lastStartId = startId
+                stopIfIdle()
+            }
         }
         return START_NOT_STICKY
     }
 
-    private fun startGraceTimer(packageName: String) {
+    private fun startGraceTimer(packageName: String, startId: Int) {
         startsInFlight.incrementAndGet()
         try {
-            startGraceTimerInternal(packageName)
+            startGraceTimerInternal(packageName, startId)
         } finally {
+            // Published only once the job is registered: a job finishing concurrently then either
+            // sees the new job in the map, or stops with a stale id that Android ignores.
+            lastStartId = startId
             startsInFlight.decrementAndGet()
+            // The job may already have finished (e.g. no grace window at job start) while this
+            // counter was still 1 and held its own stop back; re-check now that it is 0.
+            stopIfIdle()
         }
     }
 
-    private fun startGraceTimerInternal(packageName: String) {
-        // Only cancel this package's own prior job (if any); other packages' grace monitoring
-        // must keep running independently.
-        graceJobs[packageName]?.cancel()
+    private fun startGraceTimerInternal(packageName: String, startId: Int) {
         createNotificationChannel()
         val notification = buildNotification()
         try {
@@ -103,16 +130,29 @@ class GracePeriodService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "startForeground failed", e)
-            if (graceJobs.isEmpty() && startsInFlight.get() == 1) stopSelf()
+            // Without the service the grace window would never be enforced; end it instead so the
+            // next open shows the block (see the class invariant).
+            Log.e(TAG, "startForeground failed; ending session for pkg=$packageName so it is not left in unmonitored grace", e)
+            if (graceJobs[packageName]?.isActive != true) {
+                BlockingSharedState.sessions.endSession(packageName)
+            }
+            // This start is the newest one, so stop with its own id (lastStartId is not yet updated).
+            if (graceJobs.isEmpty() && startsInFlight.get() == 1) stopSelf(startId)
             return
         }
 
-        // Dispatched on Default (not Main.immediate) so this launch() call always returns before
-        // the coroutine body runs; that guarantees `job` below is assigned before the coroutine's
-        // `finally` block can read it back out of the closure.
-        var job: Job? = null
-        job = serviceScope.launch(Dispatchers.Default) {
+        val existing = graceJobs[packageName]
+        if (existing != null && existing.isActive) {
+            // Already monitored (double tap on Continue, two stacked block screens, ...). The job
+            // polls the shared deadline each tick, so it picks up the new one by itself; cancelling
+            // and replacing it here is what all the previous stop/start races were made of.
+            Log.d(TAG, "startGraceTimer: pkg=$packageName already monitored, keeping existing job")
+            return
+        }
+
+        // Started LAZY and registered before it runs, so the map can never miss a job that has
+        // already finished (a finished job removes itself by identity; see the `finally` below).
+        val job = serviceScope.launch(Dispatchers.Default, start = CoroutineStart.LAZY) {
             try {
                 if (!BlockingSharedState.isInGracePeriod(packageName)) {
                     Log.w(TAG, "startGraceTimer: no active grace window for pkg=$packageName at job start; not monitoring")
@@ -163,21 +203,37 @@ class GracePeriodService : Service() {
                 if (t is CancellationException) throw t
                 Log.e(TAG, "grace monitoring failed for pkg=$packageName", t)
             } finally {
-                // Cancellation (grace restarted for this package) must not leave a stale pill up.
+                // A stale pill must not survive the job (whatever ended it).
                 clearWarningFor(packageName)
-                // Identity-checked removal: if a newer job has already replaced this one in the
-                // map (e.g. grace was restarted for the same package while this job was winding
-                // down), don't clobber that newer entry. `job` is guaranteed non-null by the time
-                // this runs (Dispatchers.Default always dispatches, so the assignment below always
-                // completes before this coroutine body starts), but the compiler can't smart-cast a
-                // captured `var`, hence the explicit null-check.
-                job?.let { graceJobs.remove(packageName, it) }
-                if (graceJobs.isEmpty() && startsInFlight.get() == 0) {
-                    stopSelf()
+                // Identity-checked removal so a newer job for the same package is never clobbered.
+                graceJobs.remove(packageName, coroutineContext.job)
+                // A start that arrived while this job was already winding down was "kept" onto a
+                // job that is now gone. Rather than leave that grace window unmonitored, end it.
+                if (graceJobs[packageName] == null && BlockingSharedState.isInGracePeriod(packageName)) {
+                    Log.w(TAG, "job ended for pkg=$packageName while its grace is still valid; ending session")
+                    BlockingSharedState.sessions.endSession(packageName)
                 }
+                stopIfIdle()
             }
         }
         graceJobs[packageName] = job
+        job.start()
+    }
+
+    /**
+     * Stops the service once nothing is being monitored. Always with [lastStartId]: if a start
+     * newer than the one this instance last saw is already on its way, Android ignores the stop
+     * and the service stays up for it. Safe to call from any thread.
+     */
+    private fun stopIfIdle() {
+        // Snapshot first: if a start lands between the checks and the stop, this id is stale and
+        // Android rejects the stop. Reading it after the checks could pick up that start's own id
+        // and stop the service with its freshly registered job inside.
+        val startId = lastStartId
+        if (graceJobs.isEmpty() && startsInFlight.get() == 0) {
+            Log.d(TAG, "stopIfIdle: no packages monitored, stopping (startId=$startId)")
+            stopSelf(startId)
+        }
     }
 
     /**
@@ -309,8 +365,20 @@ class GracePeriodService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         BlockingSharedState.setGraceWarning(null)
+        // Being destroyed with jobs still registered means something other than [stopIfIdle] took
+        // the service down (system, user "Stop" on the foreground-service notification, a lost
+        // race). Those packages would keep a valid grace window with nothing enforcing it, so end
+        // their sessions: the next open shows the regular block. The user is not kicked out of the
+        // app they are in — that needs a running service — but they cannot get back in for free.
+        val orphaned = graceJobs.keys.toList()
         graceJobs.clear()
         serviceScope.cancel()
+        for (pkg in orphaned) {
+            if (BlockingSharedState.isInGracePeriod(pkg)) {
+                Log.w(TAG, "onDestroy: pkg=$pkg still in grace with no monitor; ending its session")
+                BlockingSharedState.sessions.endSession(pkg)
+            }
+        }
     }
 
     companion object {

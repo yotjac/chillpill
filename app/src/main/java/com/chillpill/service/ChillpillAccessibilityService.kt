@@ -580,7 +580,9 @@ class ChillpillAccessibilityService : AccessibilityService() {
             Log.d(TAG, "startGracePeriodService: starting grace for pkg=$packageName")
             applicationContext.startForegroundService(serviceIntent)
         } catch (t: Throwable) {
-            Log.e(TAG, "startGracePeriodService failed for pkg=$packageName", t)
+            // See AppBlockActivity: an unmonitored grace window must not outlive the failure.
+            Log.e(TAG, "startGracePeriodService failed for pkg=$packageName; ending session", t)
+            BlockingSharedState.sessions.endSession(packageName)
         }
     }
 

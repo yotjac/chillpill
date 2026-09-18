@@ -19,6 +19,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import com.chillpill.service.BlockingSharedState
 import com.chillpill.service.GracePeriodService
 import com.chillpill.ui.appblock.AppBlockEvent
 import com.chillpill.ui.appblock.AppBlockScreen
@@ -152,7 +153,10 @@ class AppBlockActivity : ComponentActivity() {
             }
             ContextCompat.startForegroundService(this, intent)
         } catch (e: Exception) {
-            Log.e(TAG, "startGracePeriodService failed for packageName=$packageName", e)
+            // No service means nothing will ever end this grace window; end the session now so the
+            // next open shows the block instead of being allowed in forever.
+            Log.e(TAG, "startGracePeriodService failed for packageName=$packageName; ending session", e)
+            BlockingSharedState.sessions.endSession(packageName)
         }
     }
 
