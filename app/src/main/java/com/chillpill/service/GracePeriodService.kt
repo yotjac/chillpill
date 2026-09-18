@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Foreground service that monitors the grace period for one or more restricted apps at once.
@@ -54,6 +55,15 @@ class GracePeriodService : Service() {
             }
     )
 
+    /**
+     * Number of [startGraceTimer] calls that have not yet registered their job. A job being
+     * cancelled to make room for its replacement runs its `finally` on a background thread, which
+     * can happen before the replacement lands in [graceJobs]; without this counter it would see an
+     * empty map and `stopSelf()`, and the service's destruction would cancel the replacement job —
+     * leaving an app whose grace never expires and which never warns.
+     */
+    private val startsInFlight = AtomicInteger(0)
+
     /** One monitoring job per package currently in grace. Guarded by identity-checked removal to avoid a
      * restart racing with the previous job's own cleanup (see startGraceTimer). */
     private val graceJobs = ConcurrentHashMap<String, Job>()
@@ -72,6 +82,15 @@ class GracePeriodService : Service() {
     }
 
     private fun startGraceTimer(packageName: String) {
+        startsInFlight.incrementAndGet()
+        try {
+            startGraceTimerInternal(packageName)
+        } finally {
+            startsInFlight.decrementAndGet()
+        }
+    }
+
+    private fun startGraceTimerInternal(packageName: String) {
         // Only cancel this package's own prior job (if any); other packages' grace monitoring
         // must keep running independently.
         graceJobs[packageName]?.cancel()
@@ -85,7 +104,7 @@ class GracePeriodService : Service() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "startForeground failed", e)
-            if (graceJobs.isEmpty()) stopSelf()
+            if (graceJobs.isEmpty() && startsInFlight.get() == 1) stopSelf()
             return
         }
 
@@ -105,9 +124,20 @@ class GracePeriodService : Service() {
                 val reInterventionDisabled = withContext(Dispatchers.IO) {
                     app.restrictedAppsRepository.reInterventionDisabledPackages.first()
                 }.contains(packageName)
+                var tick = 0L
                 while (true) {
                     val remaining = BlockingSharedState.sessions.graceRemainingMs(packageName)
                     if (remaining <= 0L) break
+                    // Heartbeat: every second through the last half-minute, every 30 s before that.
+                    // Without it a silent loop and a dead loop look identical in logcat.
+                    if (remaining <= 30_000L || tick % 30L == 0L) {
+                        Log.d(
+                            TAG,
+                            "tick: pkg=$packageName remaining=${remaining}ms " +
+                                "foreground=${BlockingSharedState.currentForegroundPackage}"
+                        )
+                    }
+                    tick++
                     // Two warnings with different lead times: the first, with "+10 s" on offer,
                     // gets the full 10 s and can be tapped away; the second — after the extension
                     // has been spent — comes at 5 s and cannot be dismissed.
@@ -142,7 +172,7 @@ class GracePeriodService : Service() {
                 // completes before this coroutine body starts), but the compiler can't smart-cast a
                 // captured `var`, hence the explicit null-check.
                 job?.let { graceJobs.remove(packageName, it) }
-                if (graceJobs.isEmpty()) {
+                if (graceJobs.isEmpty() && startsInFlight.get() == 0) {
                     stopSelf()
                 }
             }
@@ -195,7 +225,11 @@ class GracePeriodService : Service() {
         val reInterventionDisabled = withContext(Dispatchers.IO) {
             app.restrictedAppsRepository.reInterventionDisabledPackages.first()
         }
-        Log.d(TAG, "onGraceExpired: pkg=$packageName currentForeground=$currentForeground")
+        Log.d(
+            TAG,
+            "onGraceExpired: pkg=$packageName currentForeground=$currentForeground " +
+                "(shared=${BlockingSharedState.currentForegroundPackage})"
+        )
         if (packageName in reInterventionDisabled) {
             Log.d(TAG, "onGraceExpired: re-intervention disabled for pkg=$packageName, recording event only")
             withContext(Dispatchers.IO) {

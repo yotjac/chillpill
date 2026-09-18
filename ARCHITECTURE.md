@@ -351,7 +351,7 @@ open shows the regular block). Only no-re-block apps keep a session past grace e
   - If **re-intervention is disabled** for that package (`RestrictedAppsRepository.reInterventionDisabledPackages`) → records `GRACE_EXPIRED_WHILE_ACTIVE`/`GRACE_EXPIRED_WHILE_AWAY` (whichever matches) and stops; no block or re-intervention screen is shown, and the user is not re-blocked until they next leave and re-enter the app.
   - Else, if user is still in the restricted app → records `GRACE_EXPIRED_WHILE_ACTIVE`, starts `ReInterventionActivity` (re-intervention **only** happens at this moment)
   - Else, if user navigated away → records `GRACE_EXPIRED_WHILE_AWAY` and ends the session (`sessions.endSession`); their next open of that app shows the **regular** block screen
-- The service stops itself (`stopSelf()`) once its `graceJobs` map is empty, i.e. no package is currently being monitored.
+- The service stops itself (`stopSelf()`) once its `graceJobs` map is empty *and* no `startGraceTimer` call is still in flight (`startsInFlight`). The second condition matters because a job cancelled to make room for its replacement runs its cleanup on a background thread, possibly before the replacement is registered; stopping there would cancel `serviceScope` and with it the replacement, leaving an app whose grace never expires and which never warns.
 
 ### Service ↔ Activity Data Flow
 
