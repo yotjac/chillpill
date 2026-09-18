@@ -100,14 +100,41 @@ class GracePeriodService : Service() {
                     return@launch
                 }
                 Log.d(TAG, "startGraceTimer: monitoring pkg=$packageName")
-                while (BlockingSharedState.isInGracePeriod(packageName)) {
+                // Read once per job: the toggle can only change through Settings, and the worst case
+                // of a stale read is one unnecessary (or one missing) warning pill.
+                val reInterventionDisabled = withContext(Dispatchers.IO) {
+                    app.restrictedAppsRepository.reInterventionDisabledPackages.first()
+                }.contains(packageName)
+                while (true) {
+                    val remaining = BlockingSharedState.sessions.graceRemainingMs(packageName)
+                    if (remaining <= 0L) break
+                    // Two warnings with different lead times: the first, with "+10 s" on offer,
+                    // gets the full 10 s and can be tapped away; the second — after the extension
+                    // has been spent — comes at 5 s and cannot be dismissed.
+                    val canExtend = BlockingSharedState.sessions.canExtendGrace(packageName)
+                    val lead = if (canExtend) {
+                        SessionPolicy.WARNING_LEAD_MS
+                    } else {
+                        SessionPolicy.FINAL_WARNING_LEAD_MS
+                    }
+                    if (remaining <= lead && !reInterventionDisabled) {
+                        publishWarning(packageName, remaining, canExtend)
+                    } else {
+                        // Outside a warning window: before the lead time, or just after "+10 s"
+                        // pushed the deadline back beyond it.
+                        clearWarningFor(packageName)
+                    }
                     delay(1000L)
                 }
+                // The pill must be gone before ReInterventionActivity launches.
+                clearWarningFor(packageName)
                 onGraceExpired(packageName)
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 Log.e(TAG, "grace monitoring failed for pkg=$packageName", t)
             } finally {
+                // Cancellation (grace restarted for this package) must not leave a stale pill up.
+                clearWarningFor(packageName)
                 // Identity-checked removal: if a newer job has already replaced this one in the
                 // map (e.g. grace was restarted for the same package while this job was winding
                 // down), don't clobber that newer entry. `job` is guaranteed non-null by the time
@@ -121,6 +148,44 @@ class GracePeriodService : Service() {
             }
         }
         graceJobs[packageName] = job
+    }
+
+    /**
+     * Publishes the warning for [packageName], but only while it is the app the user is actually
+     * looking at: with two restricted apps in their last seconds, the foreground one wins and the
+     * other leaves the single warning slot alone (R3 in specs/grace-expiry-warning.md).
+     */
+    private fun publishWarning(packageName: String, remainingMs: Long, canExtend: Boolean) {
+        if (BlockingSharedState.currentForegroundPackage != packageName) return
+        val deadline = BlockingSharedState.sessions.graceDeadlineMs(packageName)
+        if (deadline == 0L) return
+        // Inside the warning window the package is always in grace, so canExtend == false means the
+        // extension has been spent — and that second warning is the one the user cannot take away.
+        val warning = BlockingSharedState.GraceWarning(
+            packageName = packageName,
+            deadlineWallMs = deadline,
+            canExtend = canExtend,
+            dismissible = canExtend
+        )
+        val current = BlockingSharedState.graceWarning.value
+        // The deadline only moves on an extension, so comparing whole objects keeps the flow quiet
+        // while the countdown ticks (the pill computes the seconds itself).
+        if (current != warning) {
+            Log.d(
+                TAG,
+                "publishWarning: pkg=$packageName remaining=${remainingMs}ms " +
+                    "canExtend=$canExtend dismissible=${warning.dismissible}"
+            )
+            BlockingSharedState.setGraceWarning(warning)
+        }
+    }
+
+    /** Clears the warning only if it is this package's; another package's pill must survive. */
+    private fun clearWarningFor(packageName: String) {
+        if (BlockingSharedState.graceWarning.value?.packageName == packageName) {
+            Log.d(TAG, "clearWarning: pkg=$packageName")
+            BlockingSharedState.setGraceWarning(null)
+        }
     }
 
     private suspend fun onGraceExpired(packageName: String) {
@@ -209,6 +274,7 @@ class GracePeriodService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        BlockingSharedState.setGraceWarning(null)
         graceJobs.clear()
         serviceScope.cancel()
     }

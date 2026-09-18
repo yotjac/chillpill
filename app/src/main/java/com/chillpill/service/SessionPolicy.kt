@@ -25,12 +25,16 @@ class SessionPolicy(
     private val activeSessions = HashSet<String>()
     private val leftAtElapsed = HashMap<String, Long>()
 
+    /** Grace extensions granted per package in the current grace window (see [extendGrace]). */
+    private val extensionsUsed = HashMap<String, Int>()
+
     /** User passed the block for [pkg]; grace runs for [graceMs] from now. */
     @Synchronized
     fun startSession(pkg: String, graceMs: Long) {
         graceValidUntil[pkg] = wallClock() + graceMs
         activeSessions.add(pkg)
         leftAtElapsed.remove(pkg)
+        extensionsUsed.remove(pkg)
     }
 
     /** A block / re-intervention screen is being shown for [pkg]; nothing carries over. */
@@ -39,16 +43,53 @@ class SessionPolicy(
         graceValidUntil.remove(pkg)
         activeSessions.remove(pkg)
         leftAtElapsed.remove(pkg)
+        extensionsUsed.remove(pkg)
     }
 
     /** Grace timer ran out for [pkg]. The session itself stays (matters only for no-re-block apps). */
     @Synchronized
     fun clearGrace(pkg: String) {
         graceValidUntil.remove(pkg)
+        extensionsUsed.remove(pkg)
     }
 
     @Synchronized
     fun isInGracePeriod(pkg: String): Boolean = (graceValidUntil[pkg] ?: 0L) > wallClock()
+
+    /** Milliseconds left of [pkg]'s grace window; 0 when it has no grace window or it already ran out. */
+    @Synchronized
+    fun graceRemainingMs(pkg: String): Long {
+        val until = graceValidUntil[pkg] ?: return 0L
+        return (until - wallClock()).coerceAtLeast(0L)
+    }
+
+    /**
+     * Epoch millis at which [pkg]'s grace runs out, or 0 when it has none. Read by the warning pill
+     * so its countdown is driven by a value that only moves on an extension, not by a fresh
+     * "now + remaining" every tick.
+     */
+    @Synchronized
+    fun graceDeadlineMs(pkg: String): Long = graceValidUntil[pkg] ?: 0L
+
+    /** True while [pkg] is in grace and has not spent all of its [MAX_GRACE_EXTENSIONS] extensions. */
+    @Synchronized
+    fun canExtendGrace(pkg: String): Boolean =
+        isInGracePeriod(pkg) && (extensionsUsed[pkg] ?: 0) < MAX_GRACE_EXTENSIONS
+
+    /**
+     * Pushes [pkg]'s grace deadline back by [GRACE_EXTENSION_MS] once per grace window (the
+     * warning pill's "+10 s"). Added to the *deadline*, not to "now", so tapping with 3 s left
+     * leaves 13 s. Returns false and changes nothing when the extension is not available.
+     *
+     * The deadline is the only thing this touches: no session change, no exit timestamp.
+     */
+    @Synchronized
+    fun extendGrace(pkg: String): Boolean {
+        if (!canExtendGrace(pkg)) return false
+        graceValidUntil[pkg] = (graceValidUntil[pkg] ?: return false) + GRACE_EXTENSION_MS
+        extensionsUsed[pkg] = (extensionsUsed[pkg] ?: 0) + 1
+        return true
+    }
 
     /** True while the user is legitimately inside [pkg] (passed the block, not blocked since). */
     @Synchronized
@@ -86,5 +127,21 @@ class SessionPolicy(
     companion object {
         /** No-re-block apps: leaving for less than this never re-triggers the block screen. */
         const val RETURN_WINDOW_MS = 10_000L
+
+        /** The grace-expiry warning pill appears once this much of the grace window is left. */
+        const val WARNING_LEAD_MS = 10_000L
+
+        /**
+         * Lead time for the *second* warning, the one shown after the extension has been spent. It
+         * comes later than the first and cannot be dismissed: the user has already had a warning
+         * and bought themselves extra time, so this one only has to say that time is up.
+         */
+        const val FINAL_WARNING_LEAD_MS = 5_000L
+
+        /** How much one "+10 s" tap adds to the grace deadline. */
+        const val GRACE_EXTENSION_MS = 10_000L
+
+        /** Extensions allowed per grace window. */
+        const val MAX_GRACE_EXTENSIONS = 1
     }
 }

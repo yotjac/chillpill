@@ -128,4 +128,96 @@ class SessionPolicyTest {
         advance(grace + 1); p.clearGrace(x); p.endSession(x)
         assertEquals(BLOCK, p.onEnterFromElsewhere(x, true))
     }
+
+    // --- Grace-expiry warning pill: extensions (specs/grace-expiry-warning.md) ---
+
+    @Test fun graceRemainingMs_countsDown_andIsZeroAfterExpiry() {
+        assertEquals(0L, p.graceRemainingMs(x))
+        p.startSession(x, grace)
+        assertEquals(grace, p.graceRemainingMs(x))
+        advance(grace - 3_000L)
+        assertEquals(3_000L, p.graceRemainingMs(x))
+        advance(10_000L)
+        assertEquals(0L, p.graceRemainingMs(x))
+    }
+
+    @Test fun extendGrace_once_movesDeadlineByExtension() {
+        p.startSession(x, grace)
+        advance(grace - 3_000L)
+        assertEquals(true, p.extendGrace(x))
+        // Added to the deadline, not to "now": 3 s left + 10 s = 13 s.
+        assertEquals(3_000L + SessionPolicy.GRACE_EXTENSION_MS, p.graceRemainingMs(x))
+    }
+
+    @Test fun extendGrace_secondCall_refused_deadlineUnchanged() {
+        p.startSession(x, grace)
+        advance(grace - 3_000L)
+        assertEquals(true, p.extendGrace(x))
+        val remaining = p.graceRemainingMs(x)
+        assertEquals(false, p.canExtendGrace(x))
+        assertEquals(false, p.extendGrace(x))
+        assertEquals(remaining, p.graceRemainingMs(x))
+    }
+
+    @Test fun extendGrace_afterExpiry_refused() {
+        p.startSession(x, grace)
+        advance(grace + 1)
+        assertEquals(false, p.canExtendGrace(x))
+        assertEquals(false, p.extendGrace(x))
+        assertEquals(0L, p.graceRemainingMs(x))
+        assertEquals(false, p.isInGracePeriod(x))
+    }
+
+    @Test fun extendGrace_neverStarted_refused() {
+        assertEquals(false, p.canExtendGrace(x))
+        assertEquals(false, p.extendGrace(x))
+        assertEquals(0L, p.graceRemainingMs(x))
+    }
+
+    @Test fun startSession_resetsExtensionCount() {
+        p.startSession(x, grace)
+        assertEquals(true, p.extendGrace(x))
+        assertEquals(false, p.canExtendGrace(x))
+        p.startSession(x, grace)
+        assertEquals(true, p.canExtendGrace(x))
+        assertEquals(true, p.extendGrace(x))
+    }
+
+    @Test fun endSession_clearsExtensionCount() {
+        p.startSession(x, grace)
+        assertEquals(true, p.extendGrace(x))
+        p.endSession(x)
+        p.startSession(x, grace)
+        assertEquals(true, p.extendGrace(x))
+    }
+
+    @Test fun clearGrace_clearsExtensionCount() {
+        p.startSession(x, grace)
+        assertEquals(true, p.extendGrace(x))
+        p.clearGrace(x)
+        p.startSession(x, grace)
+        assertEquals(true, p.extendGrace(x))
+    }
+
+    @Test fun extendGrace_doesNotTouchSessionOrReturnWindow() {
+        // I1: "+10 s" moves the deadline and nothing else.
+        p.startSession(x, grace)
+        p.onLeft(x)
+        advance(grace - 2_000L)
+        assertEquals(true, p.extendGrace(x))
+        assertEquals(true, p.hasActiveSession(x))
+        // The exit recorded before the extension is still the one that counts.
+        advance(12_000L)
+        assertEquals(false, p.isInGracePeriod(x))
+        assertEquals(BLOCK, p.onEnterFromElsewhere(x, true))
+    }
+
+    @Test fun extensionsAreTrackedPerPackage() {
+        p.startSession(x, grace)
+        p.startSession(y, grace)
+        assertEquals(true, p.extendGrace(x))
+        assertEquals(false, p.canExtendGrace(x))
+        assertEquals(true, p.canExtendGrace(y))
+        assertEquals(true, p.extendGrace(y))
+    }
 }

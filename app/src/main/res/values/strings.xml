@@ -24,6 +24,16 @@
     <string name="grace_notification_title">Chillpill – grace period</string>
     <string name="accessibility_service_description">Chillpill uses this to detect when you open restricted apps and show a short wait screen.</string>
 
+    <!-- Grace-expiry warning pill -->
+    <plurals name="grace_warning_countdown">
+        <item quantity="one">Time\'s up in %1$d s</item>
+        <item quantity="other">Time\'s up in %1$d s</item>
+    </plurals>
+    <string name="grace_warning_extend">+10 s</string>
+    <string name="grace_warning_extended">10 s added</string>
+    <string name="grace_warning_extend_description">Add ten seconds</string>
+    <string name="grace_warning_dismiss_description">Dismiss warning</string>
+
     <!-- Suggestion overlay -->
     <string name="suggest_title">You seem to be using %1$s a lot…</string>
     <string name="suggest_message">Let Chillpill help you reduce your screen time by restricting access to this app</string>

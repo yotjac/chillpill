@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Block / re-intervention screens hide the status bar. Without shortEdges the system
+         letterboxes a fullscreen window below the camera cutout (e.g. Pixel 8), so the rising
+         overlay stopped a status-bar height short of the top of the display. -->
+    <style name="Theme.Chillpill.Block" parent="Theme.Chillpill">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

@@ -39,6 +39,23 @@ private const val MIN_GRACE_MINUTES = 1
 private const val MAX_GRACE_MINUTES = 1440  // 24 hours
 private const val CONFIRMATION_TICK_MS = 100L
 
+/**
+ * True only if saving would lower the user's standards: wait time decreased, grace period
+ * increased, or at least one restricted app removed. Every other edit (stricter values, added
+ * apps, background, "block again" toggles) saves without the confirmation wait.
+ */
+internal fun isRestrictionReducing(
+    originalWaitSeconds: Int,
+    draftWaitSeconds: Int,
+    originalGraceMinutes: Int,
+    draftGraceMinutes: Int,
+    originalRestricted: Set<String>,
+    draftRestricted: Set<String>
+): Boolean =
+    draftWaitSeconds < originalWaitSeconds ||
+        draftGraceMinutes > originalGraceMinutes ||
+        !draftRestricted.containsAll(originalRestricted)
+
 class SettingsViewModel(
     private val app: ChillpillApp,
     private val draftOnly: Boolean = true
@@ -377,13 +394,15 @@ class SettingsViewModel(
 
     /** Call when focus leaves a config field to validate/reset invalid values (draft only, no persist). */
     fun onWaitTimeFocusLost() {
+        // An empty/invalid field goes back to the saved value, not the app default: resetting
+        // to the default could itself look like lowering (or raising) the standards.
         val s = _waitTimeSecondsInput.value
         if (s.isEmpty()) {
-            _waitTimeSecondsInput.value = DEFAULT_WAIT_SECONDS.toString()
+            _waitTimeSecondsInput.value = _originalWaitTimeSeconds.value.toString()
         } else {
             val n = s.toIntOrNull()
             if (n == null || n < MIN_WAIT_SECONDS) {
-                _waitTimeSecondsInput.value = DEFAULT_WAIT_SECONDS.toString()
+                _waitTimeSecondsInput.value = _originalWaitTimeSeconds.value.toString()
             } else if (n > MAX_WAIT_SECONDS) {
                 _waitTimeSecondsInput.value = MAX_WAIT_SECONDS.toString()
             }
@@ -393,11 +412,11 @@ class SettingsViewModel(
     fun onGracePeriodFocusLost() {
         val s = _gracePeriodMinutesInput.value
         if (s.isEmpty()) {
-            _gracePeriodMinutesInput.value = DEFAULT_GRACE_MINUTES.toString()
+            _gracePeriodMinutesInput.value = _originalGracePeriodMinutes.value.toString()
         } else {
             val n = s.toIntOrNull()
             if (n == null || n < MIN_GRACE_MINUTES) {
-                _gracePeriodMinutesInput.value = DEFAULT_GRACE_MINUTES.toString()
+                _gracePeriodMinutesInput.value = _originalGracePeriodMinutes.value.toString()
             } else if (n > MAX_GRACE_MINUTES) {
                 _gracePeriodMinutesInput.value = MAX_GRACE_MINUTES.toString()
             }
@@ -415,42 +434,54 @@ class SettingsViewModel(
     }
 
     /**
-     * True if the draft changes would reduce restrictions:
-     * - grace period increased, or
-     * - wait time decreased, or
-     * - any restricted app removed
+     * Re-reads what is actually persisted before judging the draft. The originals are loaded once
+     * in init, but the suggestion overlay can add a restricted app while this screen is open;
+     * such apps are merged into the draft so saving neither drops them nor counts as a removal.
      */
-    private fun isRestrictionReducing(): Boolean {
-        val waitDraft = getDraftWaitTimeSeconds()
-        val graceDraft = getDraftGracePeriodMinutes()
-        val restrictedDraft = _restrictedPackages.value
-        if (graceDraft > _originalGracePeriodMinutes.value) return true
-        if (waitDraft < _originalWaitTimeSeconds.value) return true
-        if (restrictedDraft.size < _originalRestrictedPackages.value.size ||
-            !_originalRestrictedPackages.value.all { it in restrictedDraft }) return true
-        return false
+    private suspend fun refreshOriginals() {
+        val settings = app.settingsRepository.settings.first()
+        val restricted = app.restrictedAppsRepository.restrictedPackages.first()
+        val addedElsewhere = restricted - _originalRestrictedPackages.value
+        _originalWaitTimeSeconds.value = settings.waitTimeSeconds
+        _originalGracePeriodMinutes.value = settings.gracePeriodMinutes
+        _originalRestrictedPackages.value = restricted
+        if (addedElsewhere.isNotEmpty()) {
+            _restrictedPackages.value = _restrictedPackages.value + addedElsewhere
+            loadRestrictedAppsInfo()
+        }
     }
 
     fun onSaveClicked() {
-        if (isRestrictionReducing()) {
-            _showConfirmationScreen.value = true
-            _confirmationProgress.value = 0f
-            _confirmationPhase.value = AppBlockPhase.WAITING
-            confirmationTimerJob?.cancel()
-            confirmationTimerJob = viewModelScope.launch {
-                val waitTimeSeconds = _originalWaitTimeSeconds.value.coerceAtLeast(1)
-                val totalMs = waitTimeSeconds * 1000L
-                var elapsedMs = 0L
-                while (elapsedMs < totalMs) {
-                    delay(CONFIRMATION_TICK_MS)
-                    elapsedMs += CONFIRMATION_TICK_MS
-                    _confirmationProgress.value = (elapsedMs.toFloat() / totalMs).coerceIn(0f, 1f)
-                }
-                _confirmationProgress.value = 1f
-                _confirmationPhase.value = AppBlockPhase.COMPLETED
+        viewModelScope.launch {
+            refreshOriginals()
+            val reducing = isRestrictionReducing(
+                originalWaitSeconds = _originalWaitTimeSeconds.value,
+                draftWaitSeconds = getDraftWaitTimeSeconds(),
+                originalGraceMinutes = _originalGracePeriodMinutes.value,
+                draftGraceMinutes = getDraftGracePeriodMinutes(),
+                originalRestricted = _originalRestrictedPackages.value,
+                draftRestricted = _restrictedPackages.value
+            )
+            if (reducing) startConfirmation() else saveChanges()
+        }
+    }
+
+    private fun startConfirmation() {
+        _showConfirmationScreen.value = true
+        _confirmationProgress.value = 0f
+        _confirmationPhase.value = AppBlockPhase.WAITING
+        confirmationTimerJob?.cancel()
+        confirmationTimerJob = viewModelScope.launch {
+            val waitTimeSeconds = _originalWaitTimeSeconds.value.coerceAtLeast(1)
+            val totalMs = waitTimeSeconds * 1000L
+            var elapsedMs = 0L
+            while (elapsedMs < totalMs) {
+                delay(CONFIRMATION_TICK_MS)
+                elapsedMs += CONFIRMATION_TICK_MS
+                _confirmationProgress.value = (elapsedMs.toFloat() / totalMs).coerceIn(0f, 1f)
             }
-        } else {
-            saveChanges()
+            _confirmationProgress.value = 1f
+            _confirmationPhase.value = AppBlockPhase.COMPLETED
         }
     }
 

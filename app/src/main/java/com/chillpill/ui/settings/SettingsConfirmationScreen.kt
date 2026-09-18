@@ -10,11 +10,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -30,6 +33,9 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -37,6 +43,35 @@ import androidx.compose.ui.unit.dp
 import com.chillpill.R
 import com.chillpill.ui.appblock.AppBlockPhase
 import kotlin.math.hypot
+
+/**
+ * MainActivity pads the whole nav host by the safe-drawing insets, which made the scrim and the
+ * rising overlay stop right under the status bar. This grows the node back out by those insets
+ * so the wait screen covers the full display, like the app block screen does.
+ */
+@Composable
+private fun Modifier.extendIntoSystemBars(): Modifier {
+    val insets = WindowInsets.safeDrawing
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    val left = insets.getLeft(density, layoutDirection)
+    val top = insets.getTop(density)
+    val right = insets.getRight(density, layoutDirection)
+    val bottom = insets.getBottom(density)
+    return layout { measurable, constraints ->
+        val placeable = measurable.measure(
+            constraints.copy(
+                minWidth = constraints.maxWidth + left + right,
+                maxWidth = constraints.maxWidth + left + right,
+                minHeight = constraints.maxHeight + top + bottom,
+                maxHeight = constraints.maxHeight + top + bottom
+            )
+        )
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            placeable.place(-left, -top)
+        }
+    }
+}
 
 @Composable
 fun SettingsConfirmationScreen(
@@ -65,6 +100,7 @@ fun SettingsConfirmationScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
+            .extendIntoSystemBars()
             .drawBehind {
                 val fraction = revealFraction.value
                 val origin = Offset(size.width, 0f)
@@ -91,6 +127,9 @@ fun SettingsConfirmationScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                // Raw insets on purpose: MainActivity already consumed them, so
+                // windowInsetsPadding would add nothing here.
+                .padding(WindowInsets.safeDrawing.asPaddingValues())
                 .padding(horizontal = 24.dp, vertical = 48.dp)
                 .alpha(revealFraction.value),
             verticalArrangement = Arrangement.SpaceBetween,

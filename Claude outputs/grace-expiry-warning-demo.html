@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grace warning pill — visual demo</title>
+<style>
+  :root {
+    --bg: #f4f6f8; --ink: #1e293b; --muted: #64748b;
+    --pill-bg: rgba(226, 232, 240, 0.94); --pill-ink: #0f172a; --pill-muted: #475569;
+    --primary: #0d9488; --primary-ink: #ffffff; --tonal: #ccfbf1; --tonal-ink: #134e4a;
+    --app-bg: #ffffff; --app-line: #e2e8f0;
+  }
+  .dark {
+    --bg: #0f172a; --ink: #e2e8f0; --muted: #94a3b8;
+    --pill-bg: rgba(30, 41, 59, 0.94); --pill-ink: #f1f5f9; --pill-muted: #94a3b8;
+    --primary: #14b8a6; --primary-ink: #042f2e; --tonal: #134e4a; --tonal-ink: #ccfbf1;
+    --app-bg: #111827; --app-line: #1f2937;
+  }
+  body { margin: 0; font-family: system-ui, Roboto, sans-serif; background: #e9edf1; color: #1e293b; padding: 24px 16px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.lead { margin: 0 0 20px; color: #64748b; font-size: 14px; max-width: 720px; }
+  .row { display: flex; flex-wrap: wrap; gap: 24px; }
+  .frame { width: 300px; height: 600px; border-radius: 28px; background: var(--bg); position: relative; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.18); border: 6px solid #111; }
+  .status { height: 28px; display: flex; justify-content: space-between; align-items: center; padding: 0 18px; font-size: 11px; color: var(--ink); }
+  .app { position: absolute; inset: 28px 0 0 0; background: var(--app-bg); }
+  .app .bar { height: 48px; border-bottom: 1px solid var(--app-line); display: flex; align-items: center; padding: 0 16px; font-weight: 600; color: var(--ink); font-size: 15px; }
+  .app .post { padding: 12px 16px; border-bottom: 1px solid var(--app-line); }
+  .app .post .h { height: 12px; width: 55%; border-radius: 6px; background: var(--app-line); margin-bottom: 8px; }
+  .app .post .img { height: 150px; border-radius: 10px; background: linear-gradient(135deg, var(--app-line), transparent); margin-bottom: 8px; }
+  .app .post .t { height: 10px; border-radius: 5px; background: var(--app-line); margin: 6px 0; }
+  .app .post .t.s { width: 70%; }
+  .nav { position: absolute; bottom: 0; left: 0; right: 0; height: 52px; border-top: 1px solid var(--app-line); background: var(--app-bg); display: flex; justify-content: space-around; align-items: center; }
+  .nav i { width: 22px; height: 22px; border-radius: 6px; background: var(--app-line); }
+  .pill { position: absolute; top: 36px; left: 50%; transform: translateX(-50%); height: 44px; max-width: 280px; border-radius: 22px; background: var(--pill-bg); box-shadow: 0 4px 12px rgba(0,0,0,.22); display: flex; align-items: center; gap: 10px; padding: 0 8px 0 14px; color: var(--pill-ink); font-size: 14px; white-space: nowrap; backdrop-filter: blur(6px); }
+  .pill .ico { width: 16px; height: 16px; border: 2px solid var(--pill-muted); border-radius: 50%; position: relative; box-sizing: border-box; }
+  .pill .ico::after { content: ""; position: absolute; left: 5px; top: 2px; width: 2px; height: 5px; background: var(--pill-muted); }
+  .pill .ico::before { content: ""; position: absolute; left: 5px; top: 6px; width: 4px; height: 2px; background: var(--pill-muted); }
+  .pill { transition: background-color .18s ease, color .18s ease, transform .18s cubic-bezier(.2,1.4,.4,1); }
+  .pill.done { background: var(--tonal); color: var(--tonal-ink); transform: translateX(-50%) scale(1.06); }
+  .pill .txt b { font-variant-numeric: tabular-nums; }
+  .pill .btn { height: 32px; padding: 0 14px; border-radius: 16px; border: 0; background: var(--tonal); color: var(--tonal-ink); font-weight: 600; font-size: 14px; cursor: pointer; }
+  .pill .x { width: 32px; height: 32px; border-radius: 16px; border: 0; background: transparent; color: var(--pill-muted); font-size: 18px; cursor: pointer; line-height: 32px; text-align: center; padding: 0; }
+  .cap { font-size: 13px; color: #475569; margin-top: 8px; width: 300px; }
+  .note { margin-top: 24px; font-size: 13px; color: #475569; max-width: 720px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<h1>Grace-expiry warning pill</h1>
+<p class="lead">Non-modal accessibility overlay shown for the last 10 s of a grace period, only for apps with "Block again after grace" ON. The app underneath keeps running and stays touchable; only the pill takes touches.</p>
+
+<div class="row">
+  <div>
+    <div class="frame">
+      <div class="status"><span>14:07</span><span>▲ ▮ 82%</span></div>
+      <div class="app">
+        <div class="bar">Restricted app</div>
+        <div class="post"><div class="h"></div><div class="img"></div><div class="t"></div><div class="t s"></div></div>
+        <div class="post"><div class="h"></div><div class="t"></div><div class="t"></div><div class="t s"></div></div>
+        <div class="post"><div class="h"></div><div class="img"></div></div>
+        <div class="nav"><i></i><i></i><i></i><i></i></div>
+      </div>
+      <div class="pill" role="status" aria-live="polite">
+        <span class="ico"></span>
+        <span class="txt">Time's up in <b id="c1">9</b> s</span>
+        <button class="btn" aria-label="Add ten seconds" onclick="extend()">+10 s</button>
+        <button class="x" aria-label="Dismiss warning" onclick="hide('p1')">×</button>
+      </div>
+    </div>
+    <div class="cap">State A — light, extension available (first warning, from 10 s). Tap +10 s to see the flow.</div>
+  </div>
+
+  <div class="dark">
+    <div class="frame">
+      <div class="status"><span>14:07</span><span>▲ ▮ 82%</span></div>
+      <div class="app">
+        <div class="bar">Restricted app</div>
+        <div class="post"><div class="h"></div><div class="img"></div><div class="t"></div><div class="t s"></div></div>
+        <div class="post"><div class="h"></div><div class="t"></div><div class="t"></div><div class="t s"></div></div>
+        <div class="post"><div class="h"></div><div class="img"></div></div>
+        <div class="nav"><i></i><i></i><i></i><i></i></div>
+      </div>
+      <div class="pill" id="p2" role="status" aria-live="polite">
+        <span class="ico"></span>
+        <span class="txt">Time's up in <b id="c2">7</b> s</span>
+        <button class="x" aria-label="Dismiss warning" onclick="hide('p2')">×</button>
+      </div>
+    </div>
+    <div class="cap">State B — dark, the first warning with the extension already used elsewhere: countdown only.</div>
+  </div>
+
+  <div>
+    <div class="frame">
+      <div class="status"><span>14:07</span><span>▲ ▮ 82%</span></div>
+      <div class="app">
+        <div class="bar">Restricted app</div>
+        <div class="post"><div class="h"></div><div class="img"></div><div class="t"></div><div class="t s"></div></div>
+        <div class="post"><div class="h"></div><div class="t"></div><div class="t"></div><div class="t s"></div></div>
+        <div class="post"><div class="h"></div><div class="img"></div></div>
+        <div class="nav"><i></i><i></i><i></i><i></i></div>
+      </div>
+      <div class="pill" id="p3" role="status" aria-live="polite" style="padding: 0 14px;">
+        <span class="ico"></span>
+        <span class="txt">Time's up in <b id="c3">4</b> s</span>
+      </div>
+    </div>
+    <div class="cap">State C — the second warning: last 5 s of a spent window, no button, no ×. Comes back even if the first was tapped away.</div>
+  </div>
+</div>
+
+<p class="note">
+Tapping +10 s confirms itself at once — check icon, "10 s added", a short bounce and a haptic tick — because the new deadline only reaches the pill on the grace service's next tick.
+Placement: top, centred, 8 dp below the status-bar inset; 44 dp tall; surfaceVariant at 94 % alpha; 6 dp shadow.
+Never focusable, never touch-modal, so keyboards stay open and fullscreen apps stay fullscreen.
+After +10 s the pill disappears and stays away until 5 s, where it returns as State C — late, short and unmissable: the user has already had a warning and bought extra time, so the re-block is announced whether or not they tapped the first one away. Ignoring it, or reaching 0 s, leads to the unchanged re-intervention screen; the pill is removed just before it appears.
+</p>
+
+<script>
+  let t1 = 9, t2 = 7, t3 = 4, extended = false;
+  const p1 = document.querySelector('.pill:not(#p2):not(#p3)'); p1.id = 'p1';
+  const countdownHtml = p1.querySelector('.txt').innerHTML;
+  function hide(id) { document.getElementById(id).style.display = 'none'; }
+  function extend() {
+    if (extended) return; extended = true;
+    t1 += 10;
+    // Immediate confirmation: the extension only reaches the pill on the next service tick, so the
+    // tap answers for itself rather than letting the countdown carry on.
+    p1.classList.add('done');
+    p1.querySelector('.txt').innerHTML = '10 s added';
+    p1.querySelector('.ico').style.visibility = 'hidden';
+    p1.querySelector('.btn').style.display = 'none';
+    p1.querySelector('.x').style.display = 'none';
+    setTimeout(() => {
+      p1.style.display = 'none';
+      p1.classList.remove('done');
+      p1.querySelector('.txt').innerHTML = countdownHtml;
+      p1.querySelector('.ico').style.visibility = 'visible';
+    }, 900);
+  }
+  setInterval(() => {
+    if (t1 > 0) t1--; if (t2 > 0) t2--; if (t3 > 0) t3--;
+    const c1 = document.getElementById('c1');
+    if (c1) c1.textContent = t1;
+    document.getElementById('c2').textContent = t2;
+    document.getElementById('c3').textContent = t3;
+    // After the extension there is nothing until 5 s, then the second warning: no button, no x.
+    if (extended && t1 <= 5 && t1 > 0) p1.style.display = 'flex';
+    if (t1 === 0) p1.style.display = 'none';
+    if (t2 === 0) document.getElementById('p2').style.display = 'none';
+    if (t3 === 0) document.getElementById('p3').style.display = 'none';
+  }, 1000);
+</script>
+</body>
+</html>

@@ -20,6 +20,9 @@ object UsageEventType {
     const val LEFT_APP = "LEFT_APP"
     const val GRACE_EXPIRED_WHILE_ACTIVE = "GRACE_EXPIRED_WHILE_ACTIVE"
     const val GRACE_EXPIRED_WHILE_AWAY = "GRACE_EXPIRED_WHILE_AWAY"
+
+    /** User bought ten more seconds from the grace-expiry warning pill. */
+    const val GRACE_EXTENDED = "GRACE_EXTENDED"
 }
 
 class UsageEventsRepository(private val database: UsageDatabase) {

@@ -30,6 +30,7 @@ Key concepts:
 | **Wait time** | Seconds the user must wait on the block screen (default 12, range 1–7200) |
 | **Grace period** | Minutes the user can use the app after waiting (default 5, range 1–1440) |
 | **Re-intervention** | A second block shown when the grace period expires while the user is still in the restricted app; can be toggled per restricted app |
+| **Grace-expiry warning** | A small non-modal pill shown over the app for the last 10 s of a grace period, but only when re-intervention is enabled (i.e. the user is about to be kicked out). It offers one "+10 s" extension per grace window; once that is spent a second warning appears at 5 s, as a countdown only, which cannot be dismissed |
 | **Suggestion popup** | A dialog shown when a non-restricted, non-excluded app is opened and has accumulated >30 min of foreground time in the last 12 h (cumulative, not a single sitting); offers to restrict it |
 | **Excluded app** | An app that never triggers a suggestion popup — either hardcoded (browsers, utilities, etc.) or user-chosen via "Never ask me again about [app name]" |
 
@@ -103,9 +104,12 @@ com.chillpill/
 │   ├── ForegroundPackageQuery.kt      UsageStats lookup of the current foreground package (pause-aware)
 │   ├── ChillpillAccessibilityService.kt  Detects app launches; blocks restricted apps, suggests non-restricted
 │   ├── SuggestionOverlayManager.kt     Hosts suggestion-popup via TYPE_ACCESSIBILITY_OVERLAY
+│   ├── GraceWarningOverlayManager.kt   Hosts the grace-expiry warning pill via TYPE_ACCESSIBILITY_OVERLAY
+│   ├── GraceWarningView.kt            ComposeView subclass used as the pill's root (own class name)
 │   └── GracePeriodService.kt          Foreground service that counts down the grace timer
 
 app/src/test/java/com/chillpill/service/SessionPolicyTest.kt   JVM unit tests for SessionPolicy
+app/src/test/java/com/chillpill/ui/settings/RestrictionReducingTest.kt   JVM unit tests for isRestrictionReducing
 │
 └── ui/
     ├── appblock/
@@ -132,6 +136,8 @@ app/src/test/java/com/chillpill/service/SessionPolicyTest.kt   JVM unit tests fo
     ├── statistics/
     │   ├── StatisticsScreen.kt        Time-range selector, per-app bar charts
     │   └── StatisticsViewModel.kt     Bucket aggregation, 15-second auto-refresh
+    ├── gracewarning/
+    │   └── GraceWarningPill.kt         Countdown pill with the single "+10 s" (grace-expiry warning)
     ├── suggestion/
     │   └── SuggestRestrictionScreen.kt  Dialog composable (Restrict / Ignore / Never ask again)
     └── theme/
@@ -235,6 +241,7 @@ repository properties. No Hilt, Dagger, or Koin.
 | `LEFT_APP` | User taps "Back to Home" on the block screen |
 | `GRACE_EXPIRED_WHILE_ACTIVE` | Grace timer ends while user is still in the restricted app |
 | `GRACE_EXPIRED_WHILE_AWAY` | Grace timer ends while user has navigated away |
+| `GRACE_EXTENDED` | User tapped "+10 s" on the grace-expiry warning pill |
 
 **Key DAO queries** (`UsageEventsDao`):
 - `getEventsSince(packageName, since)` → `Flow<List<UsageEvent>>`
@@ -293,10 +300,19 @@ An `object` that coordinates between the accessibility service and the grace-per
 |-------|------|---------|
 | `currentForegroundPackage` | `String?` | Last foreground package set by the a11y service |
 | `sessions` | `SessionPolicy` | Pure, unit-tested per-package bookkeeping: fixed grace deadline (set at Continue), active sessions, and "left at" timestamps for the 10 s return window of apps with re-intervention disabled (`service/SessionPolicy.kt`) |
+| `graceWarning` | `StateFlow<GraceWarning?>` | The one channel for the grace-expiry warning pill: `GracePeriodService` decides *when* a warning is due (`setGraceWarning`), `ChillpillAccessibilityService` collects it and owns the window. `GraceWarning(packageName, deadlineWallMs, canExtend, dismissible)` |
 
 Key methods: `isInGracePeriod(pkg)`, `clearGraceForPackage(pkg)`, `sessions.startSession(pkg, graceMs)`,
 `sessions.onLeft(pkg)`, `sessions.onEnterFromElsewhere(pkg, reInterventionDisabled)`,
-`sessions.hasActiveSession(pkg)`, `sessions.endSession(pkg)`.
+`sessions.hasActiveSession(pkg)`, `sessions.endSession(pkg)`, `setGraceWarning(warning)`,
+`extendGrace(pkg)`.
+
+`SessionPolicy` additionally exposes, for the warning pill (`specs/grace-expiry-warning.md`):
+`graceRemainingMs(pkg)`, `graceDeadlineMs(pkg)`, `canExtendGrace(pkg)` and `extendGrace(pkg)`, which
+pushes the deadline back by `GRACE_EXTENSION_MS` (10 s) at most `MAX_GRACE_EXTENSIONS` (1) times per
+grace window — counted in `extensionsUsed`, reset by `startSession` and cleared by `endSession` /
+`clearGrace`. The extension moves the **deadline** and nothing else: no session change, no exit
+timestamp, no `onLeft`. `WARNING_LEAD_MS` (10 s) is how much of the window is left when the pill appears.
 
 Invariant: **every block ends the session.** The accessibility service ends it on BLOCK
 (`onEnterFromElsewhere`), and `GracePeriodService` ends it whenever grace runs out for an app with
@@ -315,18 +331,21 @@ open shows the regular block). Only no-re-block apps keep a session past grace e
      a. Skip if in `ExcludedApps.EXCLUDED_PACKAGES`
      b. Skip if the package has no launcher activity (`getLaunchIntentForPackage == null`)
      c. If not already suggested this session, query **UsageStatsManager** for cumulative foreground time of this package in the last 12 h; if ≥30 min, not ignored, not permanently excluded → show suggestion via `SuggestionOverlayManager`
-- **Self-package event filtering:** Events from the app's own package are handled before dispatching to `processEvent`. For the block screen, re-intervention and the suggestion overlay only `BlockingSharedState.currentForegroundPackage` is updated; `previousForegroundPackage` is left unchanged. This prevents the block screen from "resetting" the same-app guard, so when the restricted app fires a second `TYPE_WINDOW_STATE_CHANGED` during launch (e.g. splash-to-main transition), the service correctly treats it as the same app and does not show the block screen again. Showing a block ends the package's session, so leaving from the block screen (Go Home, back, recents) can never earn a free re-entry, whatever order the window events arrive in. `MainActivity` and `ChillpillSettingsActivity` are different: they are real destinations (notification tap, launcher), so their events call `sessions.onLeft(prev)` and set `previousForegroundPackage` to our package, and coming back to the restricted app is re-evaluated like any other entry.
+- **Self-package event filtering:** Events from the app's own package are handled before dispatching to `processEvent`. An own-package event whose class is **not** one of Chillpill's four activities comes from one of our overlay windows (grace warning pill, suggestion popup); those sit on top of the app the user is in, leave it in front, and are ignored outright — they must not set `currentForegroundPackage`, or the warning pill's "show only over the app the warning belongs to" gate would fail for the rest of the grace window. For the block screen and re-intervention only `BlockingSharedState.currentForegroundPackage` is updated; `previousForegroundPackage` is left unchanged. This prevents the block screen from "resetting" the same-app guard, so when the restricted app fires a second `TYPE_WINDOW_STATE_CHANGED` during launch (e.g. splash-to-main transition), the service correctly treats it as the same app and does not show the block screen again. Showing a block ends the package's session, so leaving from the block screen (Go Home, back, recents) can never earn a free re-entry, whatever order the window events arrive in. `MainActivity` and `ChillpillSettingsActivity` are different: they are real destinations (notification tap, launcher), so their events call `sessions.onLeft(prev)` and set `previousForegroundPackage` to our package, and coming back to the restricted app is re-evaluated like any other entry.
 - **Leaving a restricted app never grants or extends grace.** Grace is "N minutes after Continue". `recordLeavingRestrictedApp` only calls `sessions.onLeft(prev)`, which records when the user left. That timestamp matters solely for apps with **"Block again after grace" off**: their session outlives the grace window while the user stays inside, and returning within `SessionPolicy.RETURN_WINDOW_MS` (10 s) of leaving keeps it; a longer absence shows the regular block on the next open. (Replaces the earlier "leaving refreshes grace" behaviour, which let these apps skip the block indefinitely — see `specs/no-reblock-apps-session-fix.md`.)
 - **Overlay windows are not exits — while there is a session.** Window events from `com.android.systemui` (shade, volume/power dialogs, keyguard) and from keyboard windows of enabled input methods are ignored when `previousForegroundPackage` has a live session (`sessions.hasActiveSession`). A keyboard *package* is not enough: apps that ship an IME (SwiftKey, Grammarly, Samsung Keyboard) also have real activities, so an event whose class resolves to an activity of that package (`PackageManager.getActivityInfo`) is treated as a normal app; the manifest declares `<queries>` for `android.view.InputMethod` so `enabledInputMethodList` is complete on API 30+. Without a session (block screen up, non-restricted app) the overlay counts as a foreground change, so block → shade → tap-notification re-evaluates the restricted app instead of hitting the same-app guard. Because the lock screen is ignored, an `ACTION_SCREEN_OFF` receiver treats screen-off as leaving the current app and resets `previousForegroundPackage`; `ACTION_USER_PRESENT` then re-evaluates the package `ForegroundPackageQuery` reports if no window event arrived since unlock. A `screenOffGeneration` counter stops a `processEvent` that was suspended on a DataStore read across the screen-off from writing its stale package back.
 - Dismissing `AppBlockActivity` / `ReInterventionActivity` via a system gesture (`onUserLeaveHint` — e.g. swipe-to-recents, pulling the notification shade) records a `LEFT_APP` event for stats accuracy, the same as tapping "Go Home" explicitly, but does **not** force-navigate anywhere; the OS is already handling where focus goes. Back is routed through `viewModel.onGoHome()` so it records `LEFT_APP` exactly once, like the button; a `leavingByButton` flag keeps `onUserLeaveHint` from double-counting those paths.
 - Starts `GracePeriodService` when the user taps "Continue" on the block screen, or when the user taps "Restrict App" in the suggestion popup (so they can continue into the app without seeing the block screen that first time).
+- **Owns the grace-expiry warning pill** (`GraceWarningOverlayManager`), because only an accessibility service may add a `TYPE_ACCESSIBILITY_OVERLAY` window. It collects `BlockingSharedState.graceWarning` on its own `Dispatchers.Main.immediate` scope (`graceWarningScope`, separate from `eventProcessorScope`) and shows the pill only while `currentForegroundPackage` is the warning's package; every foreground change (`processEvent`, and the overlay branch when it counts as one), `ACTION_SCREEN_OFF` and `onDestroy` take it down. The manager is deliberately **not** `SuggestionOverlayManager`: `processEvent` skips all event handling while that manager's `isShowing` is true, which would stop other restricted apps from being blocked for the pill's whole lifetime. The pill's `isShowing` is private to its manager and never consulted by the event pipeline. "+10 s" calls `BlockingSharedState.extendGrace(pkg)` and, on success, records `GRACE_EXTENDED`.
+- **The pill emits no accessibility events.** Its window is non-focusable, so Android should never fire `TYPE_WINDOW_STATE_CHANGED` for it; and if one arrives anyway it is ignored by the overlay rule above, whatever class name it carries. Otherwise `currentForegroundPackage` would become `com.chillpill`, which both hides the pill for the rest of the window and could make the `ForegroundPackageQuery` fallback in `onGraceExpired` treat the user as "away".
 
 ### 6.3 GracePeriodService (Foreground Service)
 
 - Started by `AppBlockActivity` or `ReInterventionActivity` when the user taps "Continue" (initial block or re-intervention), or by `ChillpillAccessibilityService` when the user taps "Restrict App" in the suggestion popup. This guarantees a grace timer runs after every block dismissal / new restriction.
 - Shows a single ongoing notification while any grace window is being monitored.
 - **Monitors one coroutine job per restricted package** (keyed in an internal `graceJobs` map), so grace for multiple restricted apps can be tracked concurrently — starting grace for App B no longer cancels or silently stops monitoring App A's grace. Starting grace again for the *same* package (e.g. re-intervention's "Keep using the app") cancels only that package's own prior job before starting a new one.
-- Each job does **not** run a local countdown. It polls `BlockingSharedState.isInGracePeriod(pkg)` once per second and calls `onGraceExpired` when that turns false. The deadline is fixed at Continue; it only moves when the user passes a block again, which also restarts the job. Launching re-intervention ends the session (`sessions.endSession`).
+- Each job does **not** run a local countdown. It polls `BlockingSharedState.sessions.graceRemainingMs(pkg)` once per second and calls `onGraceExpired` when it reaches 0. The deadline is fixed at Continue; it only moves when the user passes a block again, which also restarts the job. Launching re-intervention ends the session (`sessions.endSession`).
+- **Grace-expiry warning.** With re-intervention *enabled* for the package (the disabled set is read once when the job starts), the job publishes a `BlockingSharedState.GraceWarning` once the remaining time drops below the lead time — but only while that package is the current foreground one, so with two apps in their last seconds the foreground one gets the single warning slot and the other leaves it alone. There are two warnings with different lead times, chosen per tick by `canExtendGrace`: the first at `SessionPolicy.WARNING_LEAD_MS` (10 s), offering "+10 s" and dismissible; and, once the extension has been spent, a second at `SessionPolicy.FINAL_WARNING_LEAD_MS` (5 s) with neither button, which reappears even if the user tapped the first one away. Between the two there is no pill. The warning is cleared again if an extension pushes the remaining time back above the lead time, always just before `onGraceExpired` runs (so the pill is gone before `ReInterventionActivity` appears), in the job's `finally` (cancellation, e.g. grace restarted for that package), and in `onDestroy`. `onGraceExpired` itself is unchanged: an ignored or spent pill expires exactly as before. See `specs/grace-expiry-warning.md`.
 - `serviceScope` uses a `SupervisorJob` plus a `CoroutineExceptionHandler` (mirroring `ChillpillAccessibilityService`'s `eventProcessorScope`), so an uncaught failure while monitoring one package's grace is logged rather than silently killing every other package's grace-monitoring job or crashing the process.
 - On expiry for a given package, determines whether the user is still in that app via `ForegroundPackageQuery` (**UsageStatsManager** `queryEvents` over the last 10 minutes, tracking `ACTIVITY_RESUMED`/`ACTIVITY_PAUSED` pairs so a package that resumed and then paused — e.g. the screen was locked — is correctly treated as *not* currently foreground), falling back to `BlockingSharedState.currentForegroundPackage` if the usage-stats query is inconclusive:
   - If **re-intervention is disabled** for that package (`RestrictedAppsRepository.reInterventionDisabledPackages`) → records `GRACE_EXPIRED_WHILE_ACTIVE`/`GRACE_EXPIRED_WHILE_AWAY` (whichever matches) and stops; no block or re-intervention screen is shown, and the user is not re-blocked until they next leave and re-enter the app.
@@ -360,8 +379,10 @@ GracePeriodService
    ├── Starts (or restarts) a monitoring job for this specific package; other packages'
    │   jobs are unaffected
    ├── Shows/updates the shared ongoing notification
-   ├── Polls BlockingSharedState.isInGracePeriod(pkg) every second rather than running a
-   │   local countdown (the deadline is fixed at Continue; leaving does not move it)
+   ├── Polls BlockingSharedState.sessions.graceRemainingMs(pkg) every second rather than running
+   │   a local countdown (the deadline is fixed at Continue; leaving does not move it)
+   ├── In the last 10 s, with re-intervention enabled, publishes a GraceWarning so the
+   │   accessibility service can show the warning pill ("+10 s" moves the deadline, nothing else)
    └── On expiry: queries UsageStatsManager for actual foreground app (pause-aware);
        if re-intervention disabled for pkg → record event only, no screen shown;
        else if user still in app → start ReInterventionActivity (only place re-intervention is shown);
@@ -445,7 +466,7 @@ All ViewModels expose state via `StateFlow` and screens collect it with
 ### 7.3 Settings UI Details
 
 - **Deferred save:** Settings are not written to DataStore until the user taps **Save**. A **Save** button in the top bar (left, after the back arrow) is disabled when there are no changes and enabled when any draft change exists (wait time, grace period, restricted apps, or re-intervention toggles).
-- **Restriction-reducing confirmation:** When the user taps Save, if the draft would *reduce* restrictions (grace period increased, wait time decreased, or any restricted app removed), a **settings confirmation screen** is shown instead of persisting immediately. It reuses the re-intervention visual style (black background, animated surface fill from bottom, centered message: "Take a breath before reducing your restrictions…"). The top button is **"back"** (dismiss confirmation, stay on settings); the bottom button **"save changes"** appears only after the current (persisted) wait-time countdown completes. **Back** cancels the confirmation; **save changes** persists and closes the confirmation.
+- **Restriction-reducing confirmation:** When the user taps Save, if the draft would *reduce* restrictions (grace period increased, wait time decreased, or any restricted app removed), a **settings confirmation screen** is shown instead of persisting immediately. It reuses the re-intervention visual style (black background, animated surface fill from bottom, centered message: "Take a breath before reducing your restrictions…"). The top button is **"back"** (dismiss confirmation, stay on settings); the bottom button **"save changes"** appears only after the current (persisted) wait-time countdown completes. **Back** cancels the confirmation; **save changes** persists and closes the confirmation. The rule is the pure function `isRestrictionReducing` (top of `SettingsViewModel.kt`, unit-tested); before applying it, Save re-reads the persisted values and merges restricted apps added meanwhile by the suggestion overlay into the draft. Empty/invalid wait or grace fields fall back to the saved value (not the app default) on focus loss. The screen sits inside `MainActivity`'s `safeDrawing` padding, so it extends itself back under the system bars (`extendIntoSystemBars`) and pads its own content by the raw insets.
 - **Waiting screen image:** a `BlockBackgroundPicker` row between the configuration fields and the restricted apps list offers the bundled images from `BlockBackgrounds`, the user's own photo when one is stored, and a tile that opens the system photo picker (`ActivityResultContracts.PickVisualMedia` — no permission needed). The picked photo is imported immediately but only *selected in the draft*; the DataStore key is written on Save. Changing the image alone is never restriction-reducing, so it does not trigger the confirmation wait. A failed import surfaces as a snackbar and leaves the draft untouched. Selection is highlighted with the same pending colour as the wait-time field while unsaved.
 - **Restricted apps** section on `SettingsScreen` shows each restricted app as an expandable `Card` with the app icon, label, and an always-visible delete icon in the header row.
 - The entire card header is tappable and includes a chevron icon to indicate that it can expand for additional settings; only one app card is expanded at a time.
@@ -496,6 +517,7 @@ installed apps).
 | `viewModelScope` | All ViewModels | Standard lifecycle-aware coroutine scope |
 | `eventProcessorScope` (`Dispatchers.Default.limitedParallelism(1)`) | `ChillpillAccessibilityService` | Serialized event processing to avoid race conditions |
 | `serviceScope` (`Dispatchers.Main.immediate + SupervisorJob` + `CoroutineExceptionHandler`) | `GracePeriodService` | Parent scope for the service; each package's grace-monitoring job is launched on `Dispatchers.Default` from here (kept in a `graceJobs: Map<String, Job>`) so one package's failure or cancellation can't affect another's |
+| `graceWarningScope` (`Dispatchers.Main.immediate + SupervisorJob` + `CoroutineExceptionHandler`) | `ChillpillAccessibilityService` | Collecting `BlockingSharedState.graceWarning` and adding/removing the pill window, which must happen on the main thread and must not queue behind the (possibly suspended) event pipeline |
 | `CoroutineScope(Dispatchers.IO)` | `AppBlockActivity` | Collecting one-shot ViewModel events |
 
 Room allows main-thread queries (`allowMainThreadQueries()`) and uses
@@ -536,9 +558,10 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
 
 | Path | Contents |
 |------|----------|
-| `res/values/strings.xml` | **All** user-facing text: shared actions, block / re-intervention screens, service + accessibility descriptions, suggestion popup, home, setup, settings, waiting-screen image picker, app selection, statistics. Includes the `block_attempts_last_24h` plurals resource |
+| `res/values/strings.xml` | **All** user-facing text: shared actions, block / re-intervention screens, service + accessibility descriptions, grace-expiry warning pill (`grace_warning_countdown` plurals, `grace_warning_extend`, `grace_warning_extended`, and the two content descriptions), suggestion popup, home, setup, settings, waiting-screen image picker, app selection, statistics. Includes the `block_attempts_last_24h` plurals resource |
 | `res/values/colors.xml` | Color definitions |
 | `res/values/themes.xml` | `Theme.Chillpill` (main), `Theme.Chillpill.Block` (block screen) |
+| `res/values-v28/themes.xml` | `Theme.Chillpill.Block` with `windowLayoutInDisplayCutoutMode=shortEdges` so the fullscreen block windows are not letterboxed below the camera cutout |
 | `res/drawable-nodpi/block_activity_background.jpg` | Default block-screen background image. **nodpi** so Android does not treat it as mdpi and upscale it in memory |
 | `res/drawable/ic_launcher_foreground.xml` | Vector launcher foreground |
 | `res/xml/accessibility_service_config.xml` | AccessibilityService configuration |

@@ -26,7 +26,9 @@ import com.chillpill.data.usage.UsageEventType
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -76,6 +78,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
                     previousForegroundPackage?.let { BlockingSharedState.sessions.onLeft(it) }
                     previousForegroundPackage = null
                     BlockingSharedState.setCurrentForegroundPackage(null)
+                    graceWarningOverlay.dismiss()
                 }
                 Intent.ACTION_USER_PRESENT -> eventProcessorScope.launch {
                     // A window event after unlock (if any) already re-evaluated entry.
@@ -100,6 +103,22 @@ class ChillpillAccessibilityService : AccessibilityService() {
 
     private val overlayManager: SuggestionOverlayManager by lazy { SuggestionOverlayManager(this) }
 
+    /** Owns the grace-expiry warning pill. Deliberately separate from [overlayManager] (see I2 in the spec). */
+    private val graceWarningOverlay: GraceWarningOverlayManager by lazy { GraceWarningOverlayManager(this) }
+
+    /**
+     * Window add/remove has to happen on the main thread, and the pill must not be serialised behind
+     * the (possibly suspended) event pipeline, so it gets its own main-dispatcher scope.
+     */
+    private val graceWarningScope = CoroutineScope(
+        SupervisorJob() +
+            Dispatchers.Main.immediate +
+            CoroutineExceptionHandler { _, t ->
+                Log.e(TAG, "Uncaught exception in graceWarningScope (warning pill)", t)
+            }
+    )
+    private var graceWarningJob: Job? = null
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         val info = AccessibilityServiceInfo().apply {
@@ -120,6 +139,55 @@ class ChillpillAccessibilityService : AccessibilityService() {
             )
             screenReceiverRegistered = true
         }
+        startCollectingGraceWarnings()
+    }
+
+    /**
+     * [GracePeriodService] decides *when* a grace-expiry warning is due; this service decides
+     * whether it is visible (only over the app it belongs to) and owns the window, because only an
+     * accessibility service may add a `TYPE_ACCESSIBILITY_OVERLAY`.
+     */
+    private fun startCollectingGraceWarnings() {
+        if (graceWarningJob?.isActive == true) return
+        graceWarningJob = graceWarningScope.launch {
+            BlockingSharedState.graceWarning.collect { warning ->
+                Log.d(TAG, "graceWarning: $warning foreground=${BlockingSharedState.currentForegroundPackage}")
+                if (warning != null && warning.packageName == BlockingSharedState.currentForegroundPackage) {
+                    graceWarningOverlay.applyWarning(warning, ::onExtendGrace)
+                } else {
+                    graceWarningOverlay.applyWarning(null, ::onExtendGrace)
+                }
+            }
+        }
+    }
+
+    /**
+     * Brings the pill in line with a foreground change: visible only over the app whose grace is
+     * running out, gone everywhere else (including when the user returns to that app mid-warning).
+     */
+    private suspend fun syncGraceWarning(pkg: String?) {
+        val warning = BlockingSharedState.graceWarning.value
+        if (warning != null && warning.packageName == pkg) {
+            graceWarningOverlay.applyWarning(warning, ::onExtendGrace)
+        } else {
+            graceWarningOverlay.dismissIfNot(pkg)
+        }
+    }
+
+    /** "+10 s": moves the grace deadline and nothing else (I1). */
+    private fun onExtendGrace(packageName: String) {
+        graceWarningScope.launch {
+            val extended = BlockingSharedState.extendGrace(packageName)
+            Log.d(TAG, "onExtendGrace: pkg=$packageName extended=$extended")
+            if (!extended) return@launch
+            try {
+                withContext(Dispatchers.IO) {
+                    app.usageEventsRepository.recordEvent(packageName, UsageEventType.GRACE_EXTENDED)
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "onExtendGrace: recordEvent failed pkg=$packageName", t)
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -131,6 +199,9 @@ class ChillpillAccessibilityService : AccessibilityService() {
             }
             screenReceiverRegistered = false
         }
+        graceWarningJob = null
+        graceWarningOverlay.dismissFromMainThread()
+        graceWarningScope.cancel()
         super.onDestroy()
     }
 
@@ -140,11 +211,22 @@ class ChillpillAccessibilityService : AccessibilityService() {
         val className = event.className?.toString()
         Log.d(TAG, "onAccessibilityEvent: foreground pkg=$pkg class=$className")
         if (pkg == applicationContext.packageName) {
+            // Only our *activities* are a foreground change. Our overlay windows (the grace warning
+            // pill, the suggestion popup) sit on top of the app the user is in and leave it in
+            // front, so they must not set currentForegroundPackage: doing so makes the warning
+            // pill's own gate ("show only over the app the warning belongs to") fail for the rest
+            // of the grace window, and would let the grace-expiry fallback treat the user as
+            // "away". Matching the pill's own class name is not enough — an overlay's window event
+            // does not necessarily carry the root view's class — so the rule is inverted: anything
+            // that is not a known activity of ours is an overlay (I3 in specs/grace-expiry-warning.md).
+            if (className !in OWN_ACTIVITY_CLASSES) {
+                Log.d(TAG, "onAccessibilityEvent: own overlay window class=$className, not a foreground change")
+                return
+            }
             BlockingSharedState.setCurrentForegroundPackage(pkg)
-            // Block / re-intervention screens and the suggestion overlay sit on top of the app that
-            // triggered them and must not touch previousForegroundPackage (see same-app guard below).
-            // Chillpill's own main UI (notification tap, launcher) is a real destination though:
-            // going there *is* leaving the restricted app.
+            // Block / re-intervention screens must not touch previousForegroundPackage (see same-app
+            // guard below). Chillpill's own main UI (notification tap, launcher) is a real
+            // destination though: going there *is* leaving the restricted app.
             if (className in OWN_MAIN_UI_CLASSES) {
                 eventProcessorScope.launch {
                     val prev = previousForegroundPackage
@@ -177,6 +259,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
                 Log.d(TAG, "onAccessibilityEvent: overlay pkg=$pkg, prev=$prev has no session; counting as foreground")
                 previousForegroundPackage = pkg
                 BlockingSharedState.setCurrentForegroundPackage(pkg)
+                syncGraceWarning(pkg)
                 return@launch
             }
             processEvent(pkg)
@@ -200,6 +283,9 @@ class ChillpillAccessibilityService : AccessibilityService() {
             recordLeavingRestrictedApp(restrictedPackages, pkg)
             // GracePeriodService reads this when the timer expires to decide re-intervene vs end the session
             BlockingSharedState.setCurrentForegroundPackage(pkg)
+            // A real foreground change: the pill belongs to the app the user just left. Done here
+            // rather than at the end of this function so every early return is covered.
+            syncGraceWarning(pkg)
 
             // While our suggestion overlay is visible, ignore accessibility events to avoid
             // displacing the overlay or launching competing UI.
@@ -516,6 +602,15 @@ class ChillpillAccessibilityService : AccessibilityService() {
         private val OWN_MAIN_UI_CLASSES = setOf(
             MainActivity::class.java.name,
             ChillpillSettingsActivity::class.java.name
+        )
+
+        /**
+         * Every activity Chillpill has. An own-package window event from anything else is one of our
+         * overlays (warning pill, suggestion popup) and is not a foreground change at all.
+         */
+        private val OWN_ACTIVITY_CLASSES = OWN_MAIN_UI_CLASSES + setOf(
+            AppBlockActivity::class.java.name,
+            ReInterventionActivity::class.java.name
         )
         private const val IME_CACHE_MS = 5L * 60L * 1000L
         private const val SUGGESTION_WINDOW_MS = 12L * 60L * 60L * 1000L // 12 hours
