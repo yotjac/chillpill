@@ -135,6 +135,7 @@ amended as follows:
 - **Unlock re-evaluation.** `ACTION_USER_PRESENT` re-evaluates the package `ForegroundPackageQuery`
   (UsageStats, extracted from `GracePeriodService`) reports, if no window event arrived since
   unlock; otherwise the screen-off `leftAt` went stale and forced a block on a later 5 s hop.
+- **Screen-on re-evaluation (device finding, 2026-09-18).** The `USER_PRESENT`-only re-evaluation left `previousForegroundPackage == null` whenever the screen came back without a keyguard (lock-after-timeout delay, quick power-button tap, no lock screen) or when the UsageStats query raced the app's RESUME and returned null. The user then kept using the app unnoticed, and its next window event — e.g. the notification shade collapsing — was evaluated with the screen-off `leftAt`, minutes old: block screen after a "short pause". Fixed by `reevaluateAfterScreenOn`: runs on `ACTION_SCREEN_ON` when `isKeyguardLocked` is false and on `ACTION_USER_PRESENT` otherwise, retries the query up to 4×400 ms, and falls back to the package remembered at screen-off (`screenOffPackage`). A window event or a new screen-off during the wait aborts it.
 - **Screen-off race.** `processEvent` suspends on DataStore reads; a screen-off arriving meanwhile
   could be overwritten by the resumed event. A `screenOffGeneration` counter drops such events.
 - **Grace expiry while away ends the session** for re-intervention-enabled apps
@@ -168,8 +169,9 @@ amended as follows:
          live session; keyboard window vs activity; USER_PRESENT re-evaluation; screen-off
          generation guard; end session on expiry-while-away; Back records LEFT_APP; single
          DataStore snapshot read.
-- [ ] 10. Device pass with logcat for: shade open 60 s inside overstayed app (no block), lock 30 s
-         (block), recents round-trip 5 s (no block), F3 repro (block), block → shade → tap X
+- [ ] 10. Device pass with logcat for: shade open 60 s inside overstayed app (no block), screen
+         off/on within the lock-timeout delay then shade inside overstayed app (no block), lock 5 s
+         with keyguard then shade (no block), lock 30 s (block), recents round-trip 5 s (no block), F3 repro (block), block → shade → tap X
          notification (block), X → Chillpill notification → X after 20 s (block), typing with a
          second keyboard for 20 s (no block).
 - [x] 11. Update ARCHITECTURE.md §6 (shared state table, service flow).

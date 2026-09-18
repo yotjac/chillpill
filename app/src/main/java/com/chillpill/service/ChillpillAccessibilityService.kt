@@ -2,6 +2,7 @@ package com.chillpill.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.KeyguardManager
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.BroadcastReceiver
@@ -29,6 +30,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,11 +65,27 @@ class ChillpillAccessibilityService : AccessibilityService() {
     private var imePackagesLoadedAtElapsed = 0L
 
     /**
+     * The app that was in front when the screen went off. After the screen comes back the user is
+     * almost always still in it, but the service cannot rely on hearing about that: many devices
+     * emit no window event for the app that survives a screen-off/on, and [ForegroundPackageQuery]
+     * lags the app's RESUME. Used as the last resort of [reevaluateAfterScreenOn]. Only accessed
+     * from eventProcessorScope.
+     */
+    private var screenOffPackage: String? = null
+
+    /**
      * Screen off counts as leaving the current app. Lock-screen windows belong to SystemUI, which
      * [isOverlayWindow] ignores, so without this a locked phone would look like "still in the app".
-     * Resetting previousForegroundPackage makes the first event after unlock re-evaluate entry;
-     * because some devices emit no window event for the app that was open when the screen went off,
-     * ACTION_USER_PRESENT additionally re-evaluates whatever UsageStats says is in front.
+     * Resetting previousForegroundPackage makes the first event after the screen comes back
+     * re-evaluate entry.
+     *
+     * Because some devices emit no window event for the app that was open when the screen went
+     * off, the return is additionally re-evaluated by [reevaluateAfterScreenOn] — on
+     * ACTION_USER_PRESENT when there was a keyguard to dismiss, and on ACTION_SCREEN_ON when there
+     * was none (lock-after-timeout delay, quick power-button tap, no lock screen), a case in which
+     * USER_PRESENT never fires. Without that, previousForegroundPackage stays null while the user
+     * is inside the app and its next window event (a dialog, the shade collapsing) is judged
+     * against the screen-off timestamp — a spurious block after what looked like a short pause.
      */
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -75,28 +93,63 @@ class ChillpillAccessibilityService : AccessibilityService() {
                 Intent.ACTION_SCREEN_OFF -> eventProcessorScope.launch {
                     Log.d(TAG, "screen off: treating as leaving pkg=$previousForegroundPackage")
                     screenOffGeneration++
-                    previousForegroundPackage?.let { BlockingSharedState.sessions.onLeft(it) }
+                    previousForegroundPackage?.let {
+                        BlockingSharedState.sessions.onLeft(it)
+                        screenOffPackage = it
+                    }
                     previousForegroundPackage = null
                     BlockingSharedState.setCurrentForegroundPackage(null)
                     graceWarningOverlay.dismiss()
                 }
-                Intent.ACTION_USER_PRESENT -> eventProcessorScope.launch {
-                    // A window event after unlock (if any) already re-evaluated entry.
-                    if (previousForegroundPackage != null) return@launch
-                    val foreground = withContext(Dispatchers.IO) {
-                        try {
-                            ForegroundPackageQuery.query(applicationContext)
-                        } catch (t: Throwable) {
-                            Log.e(TAG, "user present: foreground query failed", t)
-                            null
-                        }
-                    } ?: return@launch
-                    if (previousForegroundPackage != null) return@launch
-                    if (foreground == applicationContext.packageName || isOverlayWindow(foreground, null)) return@launch
-                    Log.d(TAG, "user present: no window event since unlock, re-evaluating pkg=$foreground")
-                    processEvent(foreground)
+                Intent.ACTION_SCREEN_ON -> {
+                    val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                    val locked = keyguard?.isKeyguardLocked ?: true
+                    if (locked) {
+                        // USER_PRESENT will follow once the user gets past the keyguard.
+                        Log.d(TAG, "screen on: keyguard locked, waiting for user present")
+                    } else {
+                        reevaluateAfterScreenOn("screen on without keyguard")
+                    }
                 }
+                Intent.ACTION_USER_PRESENT -> reevaluateAfterScreenOn("user present")
             }
+        }
+    }
+
+    /**
+     * Re-evaluates entry into whatever is in front after the screen came back, unless a window
+     * event already did (previousForegroundPackage != null). The UsageStats answer is retried a few
+     * times because the app's RESUME is written slightly after the broadcast; a still-null answer
+     * falls back to [screenOffPackage]. Any window event or a new screen-off during the wait aborts.
+     */
+    private fun reevaluateAfterScreenOn(reason: String) {
+        eventProcessorScope.launch {
+            val generation = screenOffGeneration
+            var foreground: String? = null
+            var attempt = 0
+            while (true) {
+                if (previousForegroundPackage != null || generation != screenOffGeneration) return@launch
+                foreground = withContext(Dispatchers.IO) {
+                    try {
+                        ForegroundPackageQuery.query(applicationContext)
+                    } catch (t: Throwable) {
+                        Log.e(TAG, "$reason: foreground query failed", t)
+                        null
+                    }
+                }
+                if (foreground != null || ++attempt >= FOREGROUND_QUERY_ATTEMPTS) break
+                delay(FOREGROUND_QUERY_RETRY_MS)
+            }
+            if (previousForegroundPackage != null || generation != screenOffGeneration) return@launch
+            val queried = foreground
+            val pkg = queried ?: screenOffPackage ?: return@launch
+            if (pkg == applicationContext.packageName || isOverlayWindow(pkg, null)) return@launch
+            Log.d(
+                TAG,
+                "$reason: no window event since screen on, re-evaluating pkg=$pkg " +
+                    "(source=${if (queried != null) "usagestats" else "screen-off package"})"
+            )
+            processEvent(pkg)
         }
     }
     private var screenReceiverRegistered = false
@@ -133,6 +186,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
                 screenReceiver,
                 IntentFilter().apply {
                     addAction(Intent.ACTION_SCREEN_OFF)
+                    addAction(Intent.ACTION_SCREEN_ON)
                     addAction(Intent.ACTION_USER_PRESENT)
                 },
                 ContextCompat.RECEIVER_NOT_EXPORTED
@@ -615,6 +669,9 @@ class ChillpillAccessibilityService : AccessibilityService() {
             ReInterventionActivity::class.java.name
         )
         private const val IME_CACHE_MS = 5L * 60L * 1000L
+        /** UsageStats retries after the screen comes on (see [reevaluateAfterScreenOn]). */
+        private const val FOREGROUND_QUERY_ATTEMPTS = 4
+        private const val FOREGROUND_QUERY_RETRY_MS = 400L
         private const val SUGGESTION_WINDOW_MS = 12L * 60L * 60L * 1000L // 12 hours
         // Cumulative foreground time across the whole SUGGESTION_WINDOW_MS window, not "this sitting" —
         // an app already used for 30+ min earlier today will trigger the suggestion almost immediately
