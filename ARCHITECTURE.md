@@ -42,12 +42,19 @@ Key concepts:
 
 | File | Role |
 |------|------|
-| `build.gradle.kts` (root) | Declares plugin versions only (AGP 8.2.2, Kotlin 1.9.22, KSP 1.9.22-1.0.17) |
+| `build.gradle.kts` (root) | Declares plugin versions only (AGP 8.11.1, Kotlin 1.9.22, KSP 1.9.22-1.0.17) |
 | `settings.gradle.kts` | Includes `:app`, root project name `Chillpill` |
-| `app/build.gradle.kts` | App config: namespace `com.chillpill`, compileSdk 34, minSdk 24, targetSdk 34, Java 17, Compose BOM 2024.02.00, Kotlin compiler extension 1.5.8 |
+| `app/build.gradle.kts` | App config: namespace `com.chillpill`, compileSdk 36, minSdk 24, targetSdk 36, Java 17, Compose BOM 2024.02.00, Kotlin compiler extension 1.5.8 |
 
 **No version catalog** (`libs.versions.toml`) and **no convention plugins**; versions are
 declared directly in `app/build.gradle.kts`.
+
+**Toolchain floor.** AGP 8.11 requires **Gradle 8.13** (set in
+`gradle/wrapper/gradle-wrapper.properties`) and **JDK 17**. AGP 8.9 and below cannot compile
+against API 36 at all, so the AGP and `compileSdk` versions move together. Kotlin stays at
+1.9.22 with Compose compiler extension 1.5.8 — going to Kotlin 2.x would mean replacing
+`composeOptions` with the `org.jetbrains.kotlin.plugin.compose` plugin. See
+`specs/target-sdk-36.md`.
 
 ### Key Dependencies
 
@@ -508,6 +515,12 @@ All ViewModels expose state via `StateFlow` and screens collect it with
 | `ChillpillAccessibilityService` | Service | No | App-launch detection via a11y |
 | `GracePeriodService` | Service | No | Grace-period foreground timer |
 
+All four activities are locked to `android:screenOrientation="portrait"`. Android 16 ignores
+that on displays ≥600dp wide, so `<application>` declares
+`android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY` as a temporary opt-out. That
+property stops working once the app targets API 37 — adaptive layouts have to land before the
+next target bump (`specs/target-sdk-36.md`, D3).
+
 The manifest also declares a `<queries>` block for launcher intents (used to list
 installed apps).
 
@@ -584,6 +597,9 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
 # Release build (requires keystore.properties)
 ./gradlew assembleRelease
 ```
+
+Builds need **JDK 17** and the Gradle 8.13 wrapper distribution; the first build after a
+toolchain bump downloads it.
 
 After installing, the app requires:
 1. **Accessibility service** permission (to detect app launches)
