@@ -2,7 +2,6 @@ package com.chillpill
 
 import android.app.Application
 import androidx.room.Room
-import com.chillpill.data.blockstate.BlockSharedState
 import com.chillpill.data.settings.BlockBackgroundStore
 import com.chillpill.data.settings.SettingsRepository
 import com.chillpill.data.restricted.RestrictedAppsRepository
@@ -10,10 +9,10 @@ import com.chillpill.data.suggestion.AppOpenTracker
 import com.chillpill.data.suggestion.SuggestionRepository
 import com.chillpill.data.usage.UsageDatabase
 import com.chillpill.data.usage.UsageEventsRepository
+import com.chillpill.service.engine.SessionEngine
 
 class ChillpillApp : Application() {
 
-    val blockSharedState: BlockSharedState by lazy { BlockSharedState(this) }
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
     val blockBackgroundStore: BlockBackgroundStore by lazy { BlockBackgroundStore(this) }
     val restrictedAppsRepository: RestrictedAppsRepository by lazy { RestrictedAppsRepository(this) }
@@ -27,4 +26,7 @@ class ChillpillApp : Application() {
             .build()
         )
     }
+
+    /** The blocking pipeline's single owner of state (specs/session-engine.md). */
+    val sessionEngine: SessionEngine by lazy { SessionEngine(this) }
 }

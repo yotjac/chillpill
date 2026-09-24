@@ -4,8 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.chillpill.ChillpillApp
 import com.chillpill.data.settings.BlockBackground
-import com.chillpill.data.usage.UsageEventType
-import com.chillpill.service.BlockingSharedState
+import com.chillpill.service.engine.CloseReason
+import com.chillpill.service.engine.Input
+import com.chillpill.service.engine.SessionEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -78,49 +79,33 @@ class AppBlockViewModel(
         _openCount24h.value = count
     }
 
+    /**
+     * Identity of this block screen for the session engine. Survives activity recreation (the
+     * view model does), so a rotated screen is still the same block; a new block is a new id.
+     */
+    val instance: Long = android.os.SystemClock.elapsedRealtimeNanos()
+
+    /** Continue: the engine starts the grace period and records WAIT_COMPLETED. */
     fun onContinue() {
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                app.usageEventsRepository.recordEvent(
-                    packageName = packageName,
-                    eventType = UsageEventType.WAIT_COMPLETED,
-                    sessionStartTime = System.currentTimeMillis()
-                )
-                val settings = app.settingsRepository.settings.first()
-                val graceMs = settings.gracePeriodMinutes * 60L * 1000L
-                BlockingSharedState.sessions.startSession(packageName, graceMs)
-            }
-            _events.send(AppBlockEvent.RequestFinish)
-        }
+        app.sessionEngine.send(Input.ContinueTapped(packageName, SessionEngine.now()))
+        viewModelScope.launch { _events.send(AppBlockEvent.RequestFinish) }
     }
 
-    fun onGoHome() {
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                app.usageEventsRepository.recordEvent(
-                    packageName = packageName,
-                    eventType = UsageEventType.LEFT_APP
-                )
-            }
-            _events.send(AppBlockEvent.RequestGoHome)
-        }
+    /** Go Home / Back: the engine ends the block and records LEFT_APP exactly once. */
+    fun onGoHome(reason: CloseReason = CloseReason.GO_HOME) {
+        onClosed(reason)
+        viewModelScope.launch { _events.send(AppBlockEvent.RequestGoHome) }
     }
+
+    fun onStarted() = app.sessionEngine.send(Input.BlockStarted(packageName, instance, SessionEngine.now()))
+
+    fun onStopped() = app.sessionEngine.send(Input.BlockStopped(packageName, instance, SessionEngine.now()))
 
     /**
-     * Records that the block/re-intervention screen was dismissed by a system gesture
-     * (e.g. swipe-to-recents, notification shade) rather than the explicit "Home" button.
-     * The activity is already finishing on its own via onUserLeaveHint by the time this is
-     * called, so this only records the LEFT_APP event for stats accuracy; it does not emit a
-     * navigation event (no RequestGoHome), since the OS is already handling where focus goes.
+     * The screen is going away without Continue (system gesture, recents, another block replacing
+     * it). Safe to call more than once and after Continue: the engine only acts while this very
+     * screen is the app's block.
      */
-    fun recordDismissedViaSystemGesture() {
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                app.usageEventsRepository.recordEvent(
-                    packageName = packageName,
-                    eventType = UsageEventType.LEFT_APP
-                )
-            }
-        }
-    }
+    fun onClosed(reason: CloseReason) =
+        app.sessionEngine.send(Input.BlockClosed(packageName, reason, instance, SessionEngine.now()))
 }

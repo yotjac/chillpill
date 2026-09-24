@@ -1,0 +1,14 @@
+{"k":"in","type":"ConfigChanged","wall":1727190000000,"v":{"config":{"restricted":["app.noreblock"],"noReblock":["app.noreblock"],"graceMs":60000},"at":1000}}
+{"k":"in","type":"Window","wall":1727190001000,"v":{"pkg":"app.noreblock","className":"x.Main","kind":"APP","at":2000}}
+{"k":"fx","at":2000,"v":["ShowBlock(pkg=app.noreblock, kind=INITIAL)","RecordUsage(pkg=app.noreblock, kind=OPEN_ATTEMPT)"]}
+{"k":"in","type":"Window","wall":1727190001100,"v":{"pkg":"com.chillpill","className":"com.chillpill.AppBlockActivity","kind":"OWN_BLOCK_UI","at":2100}}
+{"k":"in","type":"BlockStarted","wall":1727190001200,"v":{"pkg":"app.noreblock","instance":7,"at":2200}}
+{"k":"in","type":"ContinueTapped","wall":1727190013000,"v":{"pkg":"app.noreblock","at":14000}}
+{"k":"in","type":"Window","wall":1727190013300,"v":{"pkg":"app.noreblock","className":"x.Main","kind":"APP","at":14300}}
+{"k":"in","type":"BlockClosed","wall":1727190013400,"v":{"pkg":"app.noreblock","reason":"SYSTEM_GESTURE","instance":7,"at":14400}}
+{"k":"in","type":"Tick","wall":1727190073000,"v":{"at":74000}}
+{"k":"in","type":"ScreenOff","wall":1727190199000,"v":{"at":200000}}
+{"k":"in","type":"UserPresent","wall":1727190202000,"v":{"at":203000}}
+{"k":"in","type":"Window","wall":1727190202100,"v":{"pkg":"launcher","className":"l.Home","kind":"APP","at":203100}}
+{"k":"in","type":"Probe","wall":1727190202500,"v":{"result":{"pkg":"app.noreblock","kind":"APP","resumedAt":203300},"token":999,"at":203500}}
+{"k":"in","type":"Window","wall":1727190239000,"v":{"pkg":"app.noreblock","className":"x.Dialog","kind":"APP","at":240000}}

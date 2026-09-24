@@ -11,12 +11,17 @@ import android.os.Build
  * window is an unmatched RESUME, i.e. a package is only reported as foreground when nothing has
  * paused it since. A package the user has locked the screen on, gone home from, or switched
  * away from is therefore *not* reported.
+ *
+ * The result carries the RESUME's timestamp: the session engine only believes a probe that is
+ * newer than its last window event, and dates the switch to when it really happened.
  */
 object ForegroundPackageQuery {
 
     private const val WINDOW_MS = 600_000L
 
-    fun query(context: Context): String? {
+    data class Foreground(val packageName: String, val resumedAtWallMs: Long)
+
+    fun query(context: Context): Foreground? {
         val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
             ?: return null
         val now = System.currentTimeMillis()
@@ -35,12 +40,14 @@ object ForegroundPackageQuery {
             UsageEvents.Event.MOVE_TO_BACKGROUND
         }
         var lastResumedPkg: String? = null
+        var lastResumedAt = 0L
         var lastEventWasUnpausedResume = false
         while (usageEvents.hasNextEvent()) {
             usageEvents.getNextEvent(event)
             when (event.eventType) {
                 resumeType -> {
                     lastResumedPkg = event.packageName
+                    lastResumedAt = event.timeStamp
                     lastEventWasUnpausedResume = true
                 }
                 pauseType -> {
@@ -50,6 +57,7 @@ object ForegroundPackageQuery {
                 }
             }
         }
-        return if (lastEventWasUnpausedResume) lastResumedPkg else null
+        val pkg = lastResumedPkg
+        return if (lastEventWasUnpausedResume && pkg != null) Foreground(pkg, lastResumedAt) else null
     }
 }

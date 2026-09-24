@@ -1,5 +1,9 @@
 # Grace-expiry warning pill with a single "+10 s"
 
+> **Superseded in part by `specs/session-engine.md` (2026-09-24).** The product behaviour below still
+> holds except where that spec lists a behaviour change; the implementation described here
+> (`SessionPolicy`, `BlockingSharedState`, `GracePeriodService` timers, a11y-service state) was replaced.
+
 Status: IMPLEMENTED (tasks 1–8) — 2026-09-18. Tasks 9–12 (visual-demo review, `./gradlew
 testDebugUnitTest lintDebug`, device pass and the I3 logcat check) are still open; they need the
 Android SDK / a device, which the implementing agent could not reach. Written 2026-09-18 from the

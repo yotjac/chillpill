@@ -121,6 +121,15 @@ class SuggestionOverlayManager(
         }
     }
 
+    /** For callers already on the main thread that cannot suspend (e.g. `Service.onDestroy`). */
+    fun dismissFromMainThread() {
+        try {
+            dismissInternal()
+        } catch (t: Throwable) {
+            Log.e(tag, "dismissFromMainThread failed", t)
+        }
+    }
+
     private fun dismissInternal() {
         if (overlayView == null && overlayComposeOwner == null) return
 

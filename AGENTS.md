@@ -7,8 +7,8 @@ Read this first. It is short on purpose; deeper material is linked, not inlined.
 Chillpill is a single-module Android app (Kotlin, Jetpack Compose, `:app`, package
 `com.chillpill`) that reduces screen time: an AccessibilityService intercepts launches of
 user-chosen "restricted" apps, shows a block screen with a wait timer, then grants a
-time-limited grace period tracked by a foreground service. All data is local (DataStore +
-Room). No network layer, no DI framework. Unit tests exist only for the pure `SessionPolicy`.
+time-limited grace period, all driven by one state machine (the session engine). All data is local (DataStore +
+Room). No network layer, no DI framework. Unit tests cover the pure session engine (`service/engine/`).
 
 ## Where context lives (load in this order, only as needed)
 
@@ -60,7 +60,7 @@ Gradle wrapper is checked in. On Windows use `gradlew.bat` instead of `./gradlew
 ./gradlew assembleDebug          # build
 ./gradlew installDebug           # install on the connected device/emulator
 ./gradlew lintDebug              # Android lint
-./gradlew testDebugUnitTest      # unit tests (app/src/test; only SessionPolicyTest so far)
+./gradlew testDebugUnitTest      # unit tests (app/src/test: engine scenarios + fuzz, classifier, trace replay, settings)
 ```
 
 Release signing reads `keystore.properties` from the repo root (never committed). If it is
@@ -74,27 +74,27 @@ them manually, or leave the verification step for the human.
 
 ## Gotchas (things that have bitten before)
 
-- `ChillpillAccessibilityService` processes events on a single-threaded scope
-  (`Dispatchers.Default.limitedParallelism(1)`). Keep it that way; ordering matters.
-- Events from Chillpill's block screen, re-intervention and overlay are filtered before
-  `processEvent` so they don't reset the same-app guard. Breaking this causes double
-  block screens on splash → main transitions. Only `MainActivity` /
-  `ChillpillSettingsActivity` events count as leaving the previous app.
-- Leaving a restricted app never extends grace. Grace is fixed at Continue
-  (`SessionPolicy`); `onLeft` only timestamps the exit for the 10 s return window of
-  apps with "Block again after grace" off. Do not reintroduce "leaving refreshes grace":
-  it let those apps skip the block forever (see `specs/no-reblock-apps-session-fix.md`).
-- SystemUI and keyboard windows are ignored only while the previous app has a live
-  session (`sessions.hasActiveSession`). With no session (block screen up) they count as
-  a foreground change, otherwise shade → tap-notification bypasses the block.
-- `GracePeriodService` keeps one job per package (`graceJobs`). Starting grace for app B
-  must not cancel app A's job.
-- `BlockingSharedState` (in-memory `object` in `service/`) is the live cross-service
-  state. `data/blockstate/BlockSharedState.kt` (SharedPreferences) is instantiated but
-  unused — don't build on it.
-- Re-intervention is shown only from `GracePeriodService` on grace expiry while the user
-  is still in the app. The accessibility service always launches the regular
-  `AppBlockActivity`, never `ReInterventionActivity`.
+- **All blocking / grace / warning / suggestion state lives in `EngineCore`**
+  (`service/engine/`, spec `specs/session-engine.md`). Activities, overlays and services send
+  `Input`s to `SessionEngine` and render its StateFlows; they must never keep pipeline state of
+  their own or decide anything. Nearly every past bug came from two components holding
+  different beliefs about "which app is in front".
+- `EngineCore` stays pure: no Android imports, no coroutines, no suspension, no clock. Every
+  input carries its own event time (`elapsedRealtime`). Change behaviour there, with a test in
+  `EngineCoreTest`; the fuzz test and invariant checker must stay green.
+- Only one thread touches the core (`SessionEngine`'s `limitedParallelism(1)` scope). Keep it.
+- Leaving a restricted app never extends grace. Grace is fixed at Continue; leaving only
+  timestamps the exit for the 10 s return window of apps with "Block again after grace" off. Do
+  not reintroduce "leaving refreshes grace": it let those apps skip the block forever (see
+  `specs/no-reblock-apps-session-fix.md`).
+- A restricted app's own window events in the first 2 s after its block appears (splash → main)
+  are absorbed; later ones, and anything reached through the shade, count. Getting past a block is
+  caught by the block activity's `BlockStopped` / `BlockClosed` — this must work **without usage
+  access** (it is optional), so never rely on UsageStats probes alone for it. The block activities
+  must keep reporting start / stop / close with the view model's `instance` id.
+- A device bug becomes a test: pull `files/trace/trace-0.jsonl` (see ARCHITECTURE §6.2), put it in
+  `app/src/test/resources/traces/`, assert the expected outcome in `TraceReplayTest`.
+- `GraceNotificationService` is cosmetic. Never put timers or session logic back into it.
 - Room is configured with `allowMainThreadQueries()` and
   `fallbackToDestructiveMigration()`. Bump the DB version when the schema changes; there
   are no migrations.

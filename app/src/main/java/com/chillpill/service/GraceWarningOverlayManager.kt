@@ -19,21 +19,18 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.chillpill.R
+import com.chillpill.service.engine.WarningUi
 import com.chillpill.ui.gracewarning.GraceWarningPill
 import com.chillpill.ui.theme.ChillpillTheme
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * Owns the grace-expiry warning pill: a small [WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY]
  * window at the top of the screen showing the last seconds of a grace period plus one "+10 s"
  * (see specs/grace-expiry-warning.md).
  *
- * Deliberately *not* part of [SuggestionOverlayManager]: `processEvent` skips all event handling
- * while that manager's `isShowing` is true, which would stop other restricted apps from being
- * blocked for as long as a pill is up (I2). This manager's own showing state is private and is
- * never consulted by the event pipeline.
+ * What to show is decided entirely by the session engine (`SessionEngine.warning`, see
+ * specs/session-engine.md); this class only owns the window.
  *
  * The window is non-focusable and only touch-modal inside its own bounds, so the app underneath
  * keeps running, keeps its keyboard and immersive mode, and stays touchable everywhere else.
@@ -51,59 +48,40 @@ class GraceWarningOverlayManager(
     private var layoutParams: WindowManager.LayoutParams? = null
 
     /** Drives the pill's content without removing and re-adding the window (no flicker on canExtend). */
-    private val warningState = mutableStateOf<BlockingSharedState.GraceWarning?>(null)
+    private val warningState = mutableStateOf<WarningUi?>(null)
 
-    /**
-     * Which warning the user tapped away; it must not reappear until the warning itself changes —
-     * which it does at the final-seconds mark, where the pill stops being dismissible.
-     */
-    private var dismissedFor: BlockingSharedState.GraceWarning? = null
+    private var onExtend: (String) -> Unit = {}
+    private var onDismiss: (String) -> Unit = {}
 
-    /** Private on purpose — see the class comment (I2). */
     private val isShowing: Boolean
         get() = overlayView != null
 
     /**
-     * Single entry point: shows, updates or dismisses the pill to match [warning].
-     * Pass null (or a warning for another package) to take it down.
+     * Single entry point, main thread only: shows, updates or takes down the pill to match
+     * [warning], which is the session engine's derived state (already gated on the app in front,
+     * re-intervention on, dismissal and extension). No decisions are made here.
      */
-    suspend fun applyWarning(
-        warning: BlockingSharedState.GraceWarning?,
-        onExtend: (String) -> Unit
+    fun render(
+        warning: WarningUi?,
+        onExtend: (String) -> Unit,
+        onDismiss: (String) -> Unit
     ) {
-        withContext(Dispatchers.Main.immediate) {
-            try {
-                if (warning == null) {
-                    dismissedFor = null
-                    dismissInternal()
-                    return@withContext
-                }
-                if (warning == dismissedFor && warning.dismissible) {
-                    dismissInternal()
-                    return@withContext
-                }
-                warningState.value = warning
-                if (isShowing) {
-                    Log.d(tag, "update: pkg=${warning.packageName} canExtend=${warning.canExtend} dismissible=${warning.dismissible}")
-                    return@withContext
-                }
-                showInternal(warning, onExtend)
-            } catch (t: Throwable) {
-                if (t is CancellationException) throw t
-                Log.e(tag, "apply failed for warning=$warning", t)
+        this.onExtend = onExtend
+        this.onDismiss = onDismiss
+        try {
+            if (warning == null) {
+                dismissInternal()
+                return
             }
+            warningState.value = warning
+            if (isShowing) {
+                Log.d(tag, "update: pkg=${warning.pkg} canExtend=${warning.canExtend} dismissible=${warning.dismissible}")
+                return
+            }
+            showInternal(warning)
+        } catch (t: Throwable) {
+            Log.e(tag, "render failed for warning=$warning", t)
         }
-    }
-
-    /** Takes the pill down unless it belongs to [packageName] (the user is still in that app). */
-    suspend fun dismissIfNot(packageName: String?) {
-        withContext(Dispatchers.Main.immediate) {
-            if (warningState.value?.packageName != packageName) dismissSafely()
-        }
-    }
-
-    suspend fun dismiss() {
-        withContext(Dispatchers.Main.immediate) { dismissSafely() }
     }
 
     /** For callers already on the main thread that cannot suspend (e.g. `Service.onDestroy`). */
@@ -119,10 +97,7 @@ class GraceWarningOverlayManager(
         }
     }
 
-    private fun showInternal(
-        warning: BlockingSharedState.GraceWarning,
-        onExtend: (String) -> Unit
-    ) {
+    private fun showInternal(warning: WarningUi) {
         val overlayOwner = OverlayComposeOwner().apply { start() }
         try {
             val themedContext = ContextThemeWrapper(service, R.style.Theme_Chillpill)
@@ -132,15 +107,13 @@ class GraceWarningOverlayManager(
                 if (current != null) {
                     ChillpillTheme(applyWindowDecor = false) {
                         GraceWarningPill(
-                            deadlineWallMs = current.deadlineWallMs,
+                            deadlineMs = current.deadline,
                             canExtend = current.canExtend,
                             dismissible = current.dismissible,
-                            onExtend = { onExtend(current.packageName) },
-                            onDismiss = {
-                                // Compose click callbacks arrive on the main thread.
-                                dismissedFor = warningState.value
-                                dismissSafely()
-                            }
+                            extensionConfirmed = current.extensionConfirmed,
+                            onExtend = { onExtend(current.pkg) },
+                            // The engine answers with a new warning (null, or the final countdown).
+                            onDismiss = { onDismiss(current.pkg) }
                         )
                     }
                 }
@@ -189,11 +162,11 @@ class GraceWarningOverlayManager(
             overlayView = view
             overlayComposeOwner = overlayOwner
             layoutParams = params
-            Log.d(tag, "show: pill added for pkg=${warning.packageName} canExtend=${warning.canExtend}")
+            Log.d(tag, "show: pill added for pkg=${warning.pkg} canExtend=${warning.canExtend}")
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
             overlayOwner.destroy()
-            Log.e(tag, "show failed for pkg=${warning.packageName}", t)
+            Log.e(tag, "show failed for pkg=${warning.pkg}", t)
             try {
                 dismissInternal()
             } catch (cleanupError: Throwable) {

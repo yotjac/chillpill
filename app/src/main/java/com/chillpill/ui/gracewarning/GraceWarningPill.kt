@@ -1,5 +1,6 @@
 package com.chillpill.ui.gracewarning
 
+import android.os.SystemClock
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -55,30 +56,34 @@ private val PillShape = RoundedCornerShape(22.dp)
  * The grace-expiry warning: a small, non-modal strip shown over a restricted app for the last
  * seconds of its grace period, offering one "+10 s" extension (see specs/grace-expiry-warning.md).
  *
- * Stateless apart from its own countdown, which is derived from [deadlineWallMs] rather than
+ * Stateless apart from its own countdown, which is derived from [deadlineMs] rather than
  * counted down locally, so an extension simply re-keys the effect with the new deadline.
  *
- * @param deadlineWallMs epoch millis at which grace runs out.
+ * @param deadlineMs `SystemClock.elapsedRealtime()` millis at which grace runs out.
  * @param canExtend false once the single extension has been used: countdown only, no button.
+ * @param extensionConfirmed show "10 s added" (an extension was just accepted) instead of the countdown.
  * @param dismissible false for the second warning, shown once the extension has been spent: the
  *   dismiss button goes too, so the coming re-block is announced whatever the user tapped earlier.
  */
 @Composable
 fun GraceWarningPill(
-    deadlineWallMs: Long,
+    deadlineMs: Long,
     canExtend: Boolean,
     dismissible: Boolean,
+    extensionConfirmed: Boolean = false,
     onExtend: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-    nowMillis: () -> Long = System::currentTimeMillis
+    nowMillis: () -> Long = SystemClock::elapsedRealtime
 ) {
-    var secondsLeft by remember { mutableIntStateOf(secondsUntil(deadlineWallMs, nowMillis())) }
+    var secondsLeft by remember { mutableIntStateOf(secondsUntil(deadlineMs, nowMillis())) }
 
-    // The extension only reaches the pill on the service's next tick (up to a second later), so the
-    // tap confirms itself immediately: the row turns into "10 s added" and gives a little bounce,
-    // instead of the countdown carrying on as if the tap had missed.
-    var justExtended by remember(deadlineWallMs) { mutableStateOf(false) }
+    // The tap confirms itself immediately: the row turns into "10 s added" and gives a little
+    // bounce, instead of the countdown carrying on as if the tap had missed.
+    // `tapped` answers the tap at once; `extensionConfirmed` (from the session engine, which
+    // accepted the extension) keeps the confirmation up for a moment after the deadline moved.
+    var tapped by remember(deadlineMs) { mutableStateOf(false) }
+    val justExtended = tapped || extensionConfirmed
     val haptics = LocalHapticFeedback.current
     val bounce by animateFloatAsState(
         targetValue = if (justExtended) 1.06f else 1f,
@@ -102,10 +107,10 @@ fun GraceWarningPill(
         MaterialTheme.colorScheme.onSurface
     }
 
-    LaunchedEffect(deadlineWallMs) {
+    LaunchedEffect(deadlineMs) {
         while (true) {
-            val remaining = deadlineWallMs - nowMillis()
-            secondsLeft = secondsUntil(deadlineWallMs, nowMillis())
+            val remaining = deadlineMs - nowMillis()
+            secondsLeft = secondsUntil(deadlineMs, nowMillis())
             if (remaining <= 0L) break
             // Tick on the second boundary so the number never appears to skip or stutter.
             delay((remaining % 1000L).takeIf { it > 0L } ?: 1000L)
@@ -152,7 +157,7 @@ fun GraceWarningPill(
             FilledTonalButton(
                 onClick = {
                     // Confirm before the deadline change makes its way back to us.
-                    justExtended = true
+                    tapped = true
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     onExtend()
                 },
@@ -190,8 +195,8 @@ fun GraceWarningPill(
 }
 
 /** Whole seconds still to run, rounded up, so "1 s" is shown for the whole last second. */
-private fun secondsUntil(deadlineWallMs: Long, now: Long): Int {
-    val remaining = deadlineWallMs - now
+private fun secondsUntil(deadlineMs: Long, now: Long): Int {
+    val remaining = deadlineMs - now
     if (remaining <= 0L) return 0
     return ((remaining + 999L) / 1000L).toInt()
 }
@@ -201,7 +206,7 @@ private fun secondsUntil(deadlineWallMs: Long, now: Long): Int {
 private fun GraceWarningPillPreview() {
     ChillpillTheme(applyWindowDecor = false) {
         GraceWarningPill(
-            deadlineWallMs = 9_000L,
+            deadlineMs = 9_000L,
             canExtend = true,
             dismissible = true,
             onExtend = {},
@@ -216,7 +221,7 @@ private fun GraceWarningPillPreview() {
 private fun GraceWarningPillSpentPreview() {
     ChillpillTheme(darkTheme = true, applyWindowDecor = false) {
         GraceWarningPill(
-            deadlineWallMs = 7_000L,
+            deadlineMs = 7_000L,
             canExtend = false,
             dismissible = true,
             onExtend = {},
@@ -231,7 +236,7 @@ private fun GraceWarningPillSpentPreview() {
 private fun GraceWarningPillFinalPreview() {
     ChillpillTheme(applyWindowDecor = false) {
         GraceWarningPill(
-            deadlineWallMs = 4_000L,
+            deadlineMs = 4_000L,
             canExtend = false,
             dismissible = false,
             onExtend = {},

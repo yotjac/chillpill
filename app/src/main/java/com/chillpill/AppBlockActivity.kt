@@ -19,8 +19,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
-import com.chillpill.service.BlockingSharedState
-import com.chillpill.service.GracePeriodService
+import com.chillpill.service.engine.CloseReason
 import com.chillpill.ui.appblock.AppBlockEvent
 import com.chillpill.ui.appblock.AppBlockScreen
 import com.chillpill.ui.appblock.AppBlockViewModel
@@ -31,9 +30,6 @@ import kotlinx.coroutines.launch
 class AppBlockActivity : ComponentActivity() {
 
     private val viewModel: AppBlockViewModel by viewModels { factory }
-
-    /** True once Continue / Go Home / back started navigating away (see onUserLeaveHint). */
-    private var leavingByButton = false
 
     private val factory: ViewModelProvider.Factory get() {
         return object : ViewModelProvider.Factory {
@@ -94,7 +90,7 @@ class AppBlockActivity : ComponentActivity() {
         }
 
         setContent {
-            BackHandler { viewModel.onGoHome() }
+            BackHandler { viewModel.onGoHome(CloseReason.BACK) }
             ChillpillTheme {
                 val phase by viewModel.phase.collectAsStateWithLifecycle()
                 val progress by viewModel.progress.collectAsStateWithLifecycle()
@@ -121,8 +117,6 @@ class AppBlockActivity : ComponentActivity() {
      */
     private fun launchTargetAppAndFinish() {
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: return
-        leavingByButton = true
-        startGracePeriodService(packageName)
         try {
             val launchIntent = buildLaunchIntentForPackage(packageName)
             if (launchIntent != null) {
@@ -145,21 +139,6 @@ class AppBlockActivity : ComponentActivity() {
         finish()
     }
 
-    private fun startGracePeriodService(packageName: String) {
-        try {
-            val intent = Intent(this, GracePeriodService::class.java).apply {
-                action = GracePeriodService.ACTION_START
-                putExtra(GracePeriodService.EXTRA_PACKAGE_NAME, packageName)
-            }
-            ContextCompat.startForegroundService(this, intent)
-        } catch (e: Exception) {
-            // No service means nothing will ever end this grace window; end the session now so the
-            // next open shows the block instead of being allowed in forever.
-            Log.e(TAG, "startGracePeriodService failed for packageName=$packageName; ending session", e)
-            BlockingSharedState.sessions.endSession(packageName)
-        }
-    }
-
     private fun buildLaunchIntentForPackage(packageName: String): Intent? =
         packageManager.getLaunchIntentForPackage(packageName) ?: resolveLauncherActivity(packageName)
 
@@ -172,7 +151,6 @@ class AppBlockActivity : ComponentActivity() {
     }
 
     private fun goHomeAndFinish() {
-        leavingByButton = true
         startActivity(
             Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_HOME)
@@ -182,18 +160,32 @@ class AppBlockActivity : ComponentActivity() {
         finish()
     }
 
+    override fun onStart() {
+        super.onStart()
+        if (hasPackage()) viewModel.onStarted()
+    }
+
+    override fun onStop() {
+        if (hasPackage()) viewModel.onStopped()
+        super.onStop()
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         Log.d(TAG, "onUserLeaveHint: user left, finishing")
-        // Continue / Go Home / Back also trigger onUserLeaveHint (we start another activity); those
-        // paths go through the view model and record their own events, so only count genuine
-        // system-gesture dismissals here.
-        if (!leavingByButton) viewModel.recordDismissedViaSystemGesture()
+        // Also fires after Continue / Go Home (we start another activity); the engine ignores the
+        // close then, so LEFT_APP is recorded exactly once whichever way the screen went.
+        if (hasPackage()) viewModel.onClosed(CloseReason.SYSTEM_GESTURE)
         finish()
     }
 
+    private fun hasPackage() = !intent.getStringExtra(EXTRA_PACKAGE_NAME).isNullOrBlank()
+
     override fun onDestroy() {
-        Log.d(TAG, "onDestroy: packageName=${intent.getStringExtra(EXTRA_PACKAGE_NAME)}")
+        Log.d(TAG, "onDestroy: packageName=${intent.getStringExtra(EXTRA_PACKAGE_NAME)} finishing=$isFinishing")
+        // NO_HISTORY finishes the screen as soon as the user navigates away; make sure the engine
+        // hears about it even when no other callback did (ignored if it already knows).
+        if (isFinishing && hasPackage()) viewModel.onClosed(CloseReason.SYSTEM_GESTURE)
         super.onDestroy()
     }
 

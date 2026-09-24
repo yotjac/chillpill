@@ -35,3 +35,12 @@
 # AccessibilityService (manifest-referenced; explicit keep for safety)
 # ---------------------------------------------------------------------------
 -keep class com.chillpill.service.ChillpillAccessibilityService { *; }
+
+# ---------------------------------------------------------------------------
+# Session engine trace (Gson, reflection on field names). Keep names readable so a trace pulled
+# from a release build can still be replayed in TraceReplayTest.
+# ---------------------------------------------------------------------------
+-keep class com.chillpill.service.engine.Input$* { <fields>; }
+-keep class com.chillpill.service.engine.Config { <fields>; }
+-keep class com.chillpill.service.engine.ProbeResult { <fields>; }
+-keep enum com.chillpill.service.engine.** { *; }

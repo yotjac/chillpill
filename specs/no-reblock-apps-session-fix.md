@@ -1,5 +1,9 @@
 # No-re-block apps: session fix + 10-second return window
 
+> **Superseded in part by `specs/session-engine.md` (2026-09-24).** The product behaviour below still
+> holds except where that spec lists a behaviour change; the implementation described here
+> (`SessionPolicy`, `BlockingSharedState`, `GracePeriodService` timers, a11y-service state) was replaced.
+
 "No-re-block apps" = restricted apps with **"Block again after grace" turned OFF**
 (`RestrictedAppsRepository.reInterventionDisabledPackages`).
 
