@@ -272,17 +272,48 @@ class SessionEngine(private val app: ChillpillApp) {
         return imePackages
     }
 
-    private fun isActivityOf(pkg: String, className: String): Boolean = try {
-        app.packageManager.getActivityInfo(ComponentName(pkg, className), 0)
-        true
-    } catch (_: PackageManager.NameNotFoundException) {
-        false
+    /**
+     * Whether [className] is an activity of [pkg]; null when the package is not visible to us
+     * (package visibility, API 30+: launchable apps and enabled IMEs are, see `<queries>` in the
+     * manifest). Every window event asks, so answers are cached; they only change on (un)install,
+     * which the TTL covers.
+     */
+    private val activityLookups = HashMap<String, Boolean?>()
+    private var activityLookupsClearedAt = 0L
+
+    @Synchronized
+    private fun isActivityOf(pkg: String, className: String): Boolean? {
+        val now = now()
+        if (now - activityLookupsClearedAt > LOOKUP_CACHE_MS) {
+            activityLookups.clear()
+            activityLookupsClearedAt = now
+        }
+        val key = "$pkg/$className"
+        if (activityLookups.containsKey(key)) return activityLookups[key]
+        val pm = app.packageManager
+        val result: Boolean? = try {
+            pm.getActivityInfo(ComponentName(pkg, className), 0)
+            true
+        } catch (_: PackageManager.NameNotFoundException) {
+            try {
+                pm.getPackageInfo(pkg, 0)
+                false
+            } catch (_: PackageManager.NameNotFoundException) {
+                null
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "activity lookup failed for $key", t)
+            null
+        }
+        activityLookups[key] = result
+        return result
     }
 
     companion object {
         private const val TAG = "SessionEngine"
         private const val TRACE_FLUSH_MS = 2_000L
         private const val IME_CACHE_MS = 5L * 60L * 1000L
+        private const val LOOKUP_CACHE_MS = 5L * 60L * 1000L
         private const val CONFIG_RETRY_MS = 1_000L
 
         fun now(): Long = SystemClock.elapsedRealtime()

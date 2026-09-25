@@ -321,8 +321,16 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
   RESUME times are converted). `handle(input)` mutates state synchronously and returns `Effect`s.
 - **Presence** (`Presence(pkg, kind, since, screenOn)`): the single belief about which app is in
   front. Window events of kind `APP` / `OWN_MAIN_UI` / `OWN_BLOCK_UI` change it; overlays (SystemUI,
-  keyboard windows, our pill and popup) never do; screen-off clears it. An older signal never
-  overrides a newer one (`at < since` is dropped).
+  keyboard windows, our pill and popup, and any other app's non-activity windows: dialogs, bottom
+  sheets, popups, toasts) never do; screen-off clears it. An older signal never overrides a newer
+  one (`at < since` is dropped).
+- **Positive evidence only** (`WindowClassifier`): a foreign window counts as a foreground change
+  only when its class is an activity of its package (`PackageManager.getActivityInfo`, cached in
+  `SessionEngine`). A non-activity window does not pause the app beneath it, so a wrong "the user
+  left" from one of them could never be repaired by a UsageStats probe (nothing newer ever
+  resumes), and the session would end silently "while away". A probe (no class) is `APP`; a package
+  we cannot see (visibility filtering: no launcher activity, not an IME) is `APP_OVERLAY` for a
+  framework class (`android.*`) and `APP` otherwise.
 - **Self-healing presence:** while any live session exists (grace running, user inside, or a
   no-re-block app left < 15 s ago) and the screen is on, a UsageStats probe runs
   every 5 s and 1.5 s before each grace deadline; after screen-on / unlock a burst of 4 probes runs
@@ -357,10 +365,11 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
 - Publishes `warning`, `suggestion`, `graceActive` as `StateFlow`s and keeps one wake-up timer at
   `nextWakeUp`. A late wake-up (deep sleep) is harmless: the next input processes overdue deadlines
   first, with the same outcome.
-- Also owns the `WindowClassifier` (with the IME-package cache and activity lookup).
+- Also owns the `WindowClassifier` (with the IME-package cache and the cached
+  `isActivityOf` lookup: true / false / null = package not visible).
 - **Trace:** every input and effect is appended as JSON lines to `filesDir/trace/trace-{0,1}.jsonl`
   (`EngineTrace`, 512 KB rotation). Pull with
-  `adb exec-out run-as com.chillpill cat files/trace/trace-0.jsonl`; drop it into
+  `adb exec-out run-as com.chillpillapp cat files/trace/trace-0.jsonl`; drop it into
   `app/src/test/resources/traces/` and replay it in `TraceReplayTest`.
 - **Process exit reasons** (API 30+, `ProcessExitLogger`) are logged at start and written to the
   trace, since sessions are in memory only and a restart makes the next event block.

@@ -89,6 +89,8 @@ class EngineHarness(
     fun app(pkg: String) = window(pkg)
     fun home() = window(L)
     fun shade() = window("com.android.systemui", WindowKind.SYSTEM_OVERLAY)
+    /** A dialog / bottom sheet / popup / toast window of [pkg] (not one of its activities). */
+    fun popup(pkg: String) = window(pkg, WindowKind.APP_OVERLAY, className = "android.app.Dialog")
     fun screenOff() = send(Input.ScreenOff(now))
     fun screenOn(locked: Boolean) = send(Input.ScreenOn(locked, now))
     fun userPresent() = send(Input.UserPresent(now))

@@ -139,9 +139,77 @@ class EngineCoreTest {
         h.shade(); h.advance(60_000)
         h.window("ime.pkg", WindowKind.SYSTEM_OVERLAY); h.advance(20_000)
         h.window(OWN, WindowKind.OWN_OVERLAY); h.advance(20_000)
+        h.popup("android"); h.advance(20_000)
+        h.popup(N); h.advance(20_000)
         h.app(N)
         assertEquals(1, h.blocksShown(N).size)
         assertEquals(N, h.core.presence.pkg)
+    }
+
+    // ---- S5: a foreign non-activity window straddles the grace deadline ---------------------
+
+    /**
+     * Instagram reel -> comments: a popup / keyboard / autofill window of another package appears
+     * over the app, the app underneath never pauses, so no probe could ever have repaired a
+     * presence that moved away. Classified as an overlay the deadline is enforced in place.
+     */
+    @Test fun s5_foreignPopupDuringGrace_deadlineStillReInterventsInPlace() {
+        val h = h()
+        h.enterWithContinue(X)
+        h.truth = ProbeResult(X, WindowKind.APP, h.now) // X resumed once; nothing newer ever comes
+        h.advance(GRACE - 5_000)
+        h.popup("com.google.android.gms")
+        h.popup("android")
+        assertEquals(X, h.core.presence.pkg)
+        assertNull(h.session(X)!!.leftAt)
+        assertNotNull(h.warning())
+        h.advance(6_000)
+        assertEquals(listOf(BlockKind.INITIAL, BlockKind.RE_INTERVENTION), h.blocksShown(X).map { it.kind })
+        assertEquals(1, h.usage(UsageKind.GRACE_EXPIRED_WHILE_ACTIVE, X))
+        assertEquals(0, h.usage(UsageKind.GRACE_EXPIRED_WHILE_AWAY, X))
+    }
+
+    /** Control: the same sequence with the popup mis-classified as an app is the reported bug. */
+    @Test fun s5_control_foreignWindowTakenAsApp_endsSessionSilently_thenBlocksOnNextEvent() {
+        val h = h()
+        h.enterWithContinue(X)
+        h.truth = ProbeResult(X, WindowKind.APP, h.now)
+        h.advance(GRACE - 5_000)
+        h.app("com.google.android.gms") // what the old classifier made of the popup
+        h.advance(6_000)
+        assertEquals(1, h.blocksShown(X).size) // no re-intervention: believed away
+        assertEquals(1, h.usage(UsageKind.GRACE_EXPIRED_WHILE_AWAY, X))
+        h.app(X) // the comments sheet's activity-level event, much later
+        assertEquals(listOf(BlockKind.INITIAL, BlockKind.INITIAL), h.blocksShown(X).map { it.kind })
+    }
+
+    /** Launch: the starting (splash) window is a FrameLayout of the app; the block waits for the activity. */
+    @Test fun startingWindow_isIgnored_activityEventBlocks() {
+        val h = h()
+        h.home()
+        h.window(X, WindowKind.APP_OVERLAY, className = "android.widget.FrameLayout")
+        assertEquals(0, h.blocksShown(X).size)
+        assertEquals(L, h.core.presence.pkg) // the splash moves nothing
+        h.advance(400)
+        h.app(X)
+        assertEquals(1, h.blocksShown(X).size)
+        assertEquals(X, h.core.presence.pkg)
+    }
+
+    /** The app's own dialogs while the user is inside are nothing; while blocked they are not "getting past". */
+    @Test fun ownPopups_ofRestrictedApp_areInert() {
+        val h = h()
+        h.enterWithContinue(X)
+        h.advance(10_000)
+        h.popup(X)
+        assertNull(h.session(X)!!.leftAt)
+        h.advance(GRACE)
+        assertEquals(BlockKind.RE_INTERVENTION, h.blocksShown(X).last().kind)
+        h.blockAppears(X)
+        h.advance(5_000)
+        h.popup(X) // a toast of the app behind the block screen
+        assertEquals(2, h.blocksShown(X).size)
+        assertEquals(WindowKind.OWN_BLOCK_UI, h.core.presence.kind)
     }
 
     // ---- S1: stale presence after unlock --------------------------------------------------

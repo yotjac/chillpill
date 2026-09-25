@@ -1,0 +1,14 @@
+{"k":"in","type":"ConfigChanged","wall":1790274001000,"v":{"config":{"restricted":["com.instagram.android"],"noReblock":[],"graceMs":300000},"at":1000}}
+{"k":"in","type":"Window","wall":1790274002000,"v":{"pkg":"com.instagram.android","className":"com.instagram.mainactivity.InstagramMainActivity","kind":"APP","at":2000}}
+{"k":"in","type":"Window","wall":1790274002100,"v":{"pkg":"com.chillpill","className":"com.chillpill.AppBlockActivity","kind":"OWN_BLOCK_UI","at":2100}}
+{"k":"in","type":"BlockStarted","wall":1790274002200,"v":{"pkg":"com.instagram.android","instance":7,"at":2200}}
+{"k":"in","type":"ContinueTapped","wall":1790274014000,"v":{"pkg":"com.instagram.android","at":14000}}
+{"k":"in","type":"Window","wall":1790274014300,"v":{"pkg":"com.instagram.android","className":"com.instagram.mainactivity.InstagramMainActivity","kind":"APP","at":14300}}
+{"k":"in","type":"BlockClosed","wall":1790274014400,"v":{"pkg":"com.instagram.android","reason":"SYSTEM_GESTURE","instance":7,"at":14400}}
+{"k":"in","type":"Window","wall":1790274100000,"v":{"pkg":"com.instagram.android","className":"android.view.View","kind":"APP_OVERLAY","at":100000}}
+{"k":"in","type":"Window","wall":1790274300000,"v":{"pkg":"com.android.systemui","className":"android.widget.FrameLayout","kind":"SYSTEM_OVERLAY","at":300000}}
+{"k":"in","type":"Window","wall":1790274300100,"v":{"pkg":"com.google.android.googlequicksearchbox","className":"android.service.voice.VoiceInteractionWindow","kind":"APP_OVERLAY","at":300100}}
+{"k":"in","type":"Probe","wall":1790274305000,"v":{"result":{"pkg":"com.instagram.android","kind":"APP","resumedAt":14300},"token":1,"at":305000}}
+{"k":"in","type":"Probe","wall":1790274310000,"v":{"result":{"pkg":"com.instagram.android","kind":"APP","resumedAt":14300},"token":2,"at":310000}}
+{"k":"in","type":"Tick","wall":1790274314001,"v":{"at":314001}}
+{"k":"in","type":"Window","wall":1790274320000,"v":{"pkg":"com.instagram.android","className":"android.view.View","kind":"APP_OVERLAY","at":320000}}

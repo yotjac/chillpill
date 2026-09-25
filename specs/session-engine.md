@@ -116,7 +116,7 @@ can interleave inside a decision.
 
 ### Model (`service/engine/EngineModel.kt`)
 ```kotlin
-enum class WindowKind { APP, OWN_MAIN_UI, OWN_BLOCK_UI, OWN_OVERLAY, SYSTEM_OVERLAY }
+enum class WindowKind { APP, APP_OVERLAY, OWN_MAIN_UI, OWN_BLOCK_UI, OWN_OVERLAY, SYSTEM_OVERLAY }
 enum class BlockKind { INITIAL, RE_INTERVENTION }
 enum class CloseReason { GO_HOME, BACK, SYSTEM_GESTURE, CONTINUE }
 enum class SuggestionAnswer { RESTRICT, IGNORE, NEVER }
@@ -168,8 +168,20 @@ Same rules as today, moved into one tested function with the lookups injected:
 | own package, `AppBlockActivity` / `ReInterventionActivity` | `OWN_BLOCK_UI` |
 | own package, anything else (pill, suggestion popup) | `OWN_OVERLAY` |
 | `com.android.systemui` | `SYSTEM_OVERLAY` |
-| enabled-IME package and class is not one of its activities | `SYSTEM_OVERLAY` |
-| everything else | `APP` |
+| enabled-IME package and class is not one of its activities (or unknown) | `SYSTEM_OVERLAY` |
+| any other package, class is an activity of it | `APP` |
+| any other package, class is known *not* to be one of its activities (dialog, bottom sheet, popup, toast) | `APP_OVERLAY` |
+| any other package, class null (probe) | `APP` |
+| package not visible to us (no launcher activity, not an IME), framework class (`android.*`) | `APP_OVERLAY` |
+| package not visible to us, any other class | `APP` |
+
+Positive evidence only (added after the Instagram-comments bug): presence moves for a window
+that is known to be an *activity*. Non-activity windows float over the app in front without
+pausing it, so if one were counted as a foreground change the engine would believe the user left,
+and, since the app underneath never resumes again, no UsageStats probe could ever repair that. The
+session then ended silently "while away" (G3) and the app's next real event blocked it (E2).
+Cost: an app's starting (splash) window is a `FrameLayout` of its package that arrives ~300–450 ms
+before the activity's event, so an initial block now fires on the activity event, that much later.
 
 Change vs today: SystemUI is **always** an overlay. The "count SystemUI as a foreground change
 when there is no session" rule existed only so block → shade → tap X notification re-evaluates X.
@@ -180,7 +192,8 @@ The engine handles that through the block screen's own lifecycle (rule E3 below)
   `X != presence.pkg`: `leave(presence.pkg, at)`, set presence to X since `at`, then
   `evaluate(X, at, entry = true)`. If `X == presence.pkg`: `evaluate(X, at, entry = false)`.
 - **P2 Window(OWN_BLOCK_UI).** `leave(presence.pkg, at)`, presence = own package / OWN_BLOCK_UI.
-- **P3 Window(OWN_OVERLAY or SYSTEM_OVERLAY).** Ignored. Never changes presence.
+- **P3 Window(OWN_OVERLAY, APP_OVERLAY or SYSTEM_OVERLAY).** Ignored. Never changes presence
+  (SYSTEM_OVERLAY over our block screen excepted: the shade rule).
 - **P4 ScreenOff.** `leave(presence.pkg, at)`, remember `screenOffPkg`, presence = null,
   `screenOn = false`. Pill and popup disappear (derived).
 - **P5 ScreenOn(locked = false) / UserPresent.** `screenOn = true`; start a probe burst: 4 probes,
@@ -302,7 +315,7 @@ cannot be gated on one belief while expiry uses another.
   `filesDir/trace/trace-N.jsonl`, rotating at 512 KB, two files kept, buffered and flushed every
   2 s and on `ShowBlock`. The config is written at start and on every change so a trace can be
   replayed on its own. Pull on a debug build with
-  `adb exec-out run-as com.chillpill cat files/trace/trace-0.jsonl`. (An in-app "export
+  `adb exec-out run-as com.chillpillapp cat files/trace/trace-0.jsonl`. (An in-app "export
   diagnostics" button is a possible follow-up; it needs its own UI spec.)
 - **Replay.** `TraceReplayTest` loads a trace from `app/src/test/resources/traces/`, feeds it to a
   fresh `EngineCore`, and checks the invariants plus the assertions written for that trace. A

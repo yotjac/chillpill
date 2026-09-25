@@ -105,7 +105,7 @@ class EngineCore {
 
     private fun onWindow(input: Input.Window, out: MutableList<Effect>) {
         when (input.kind) {
-            WindowKind.OWN_OVERLAY -> Unit // P3
+            WindowKind.OWN_OVERLAY, WindowKind.APP_OVERLAY -> Unit // P3
             WindowKind.SYSTEM_OVERLAY -> { // P3
                 // Over an app, SystemUI / keyboard windows never change presence. Over our block
                 // screen they do: whatever the user reaches from the shade (the blocked app's own

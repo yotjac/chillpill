@@ -9,7 +9,7 @@ import java.nio.file.Files
 
 /**
  * Replays recorded engine traces. To turn a device bug into a test:
- *   adb exec-out run-as com.chillpill cat files/trace/trace-0.jsonl > app/src/test/resources/traces/<name>.jsonl
+ *   adb exec-out run-as com.chillpillapp cat files/trace/trace-0.jsonl > app/src/test/resources/traces/<name>.jsonl
  * then add a test below that replays it and asserts the expected outcome.
  */
 class TraceReplayTest {
@@ -66,6 +66,23 @@ class TraceReplayTest {
         val (core, effects) = replay(inputs)
         assertEquals(1, effects.count { it is Effect.ShowBlock })
         assertEquals(N, core.presence.pkg)
+    }
+
+    /**
+     * Distilled from a device trace: the Assistant's VoiceInteractionWindow (a non-activity window
+     * of a foreign package) appears over Instagram during grace; probes only ever see Instagram's
+     * old RESUME. Classified as an overlay, the deadline re-intervenes in place instead of ending
+     * the session "while away" and blocking on the next comments sheet.
+     */
+    @Test fun s5_assistantOverInstagram_trace() {
+        val inputs = load("s5-assistant-over-instagram.jsonl")
+        val (core, effects) = replay(inputs)
+        assertEquals(
+            listOf(BlockKind.INITIAL, BlockKind.RE_INTERVENTION),
+            effects.filterIsInstance<Effect.ShowBlock>().map { it.kind }
+        )
+        assertEquals(0, effects.count { it is Effect.RecordUsage && it.kind == UsageKind.GRACE_EXPIRED_WHILE_AWAY })
+        assertEquals("com.instagram.android", core.presence.pkg)
     }
 
     /** Every trace dropped into resources must at least replay without breaking an invariant. */

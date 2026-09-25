@@ -94,6 +94,11 @@ them manually, or leave the verification step for the human.
   must keep reporting start / stop / close with the view model's `instance` id.
 - A device bug becomes a test: pull `files/trace/trace-0.jsonl` (see ARCHITECTURE §6.2), put it in
   `app/src/test/resources/traces/`, assert the expected outcome in `TraceReplayTest`.
+- Presence moves on **positive evidence only**: a foreign window is a foreground change if its
+  class is an activity of its package (`WindowClassifier`). Dialogs, bottom sheets, popups, toasts
+  and keyboards of other packages are overlays. Never go back to "everything unknown is an app":
+  such a window does not pause the app under it, so no probe can ever undo the wrong "user left",
+  and grace then ends silently instead of re-intervening (the Instagram-comments bug).
 - `GraceNotificationService` is cosmetic. Never put timers or session logic back into it.
 - Room is configured with `allowMainThreadQueries()` and
   `fallbackToDestructiveMigration()`. Bump the DB version when the schema changes; there

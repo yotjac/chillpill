@@ -10,8 +10,14 @@ package com.chillpill.service.engine
 
 /** What a TYPE_WINDOW_STATE_CHANGED event (or a UsageStats probe) is about. See [WindowClassifier]. */
 enum class WindowKind {
-    /** Any other app: a real foreground change. */
+    /** An activity of any other app: a real foreground change. */
     APP,
+    /**
+     * A window of another app that is not one of its activities (dialog, bottom sheet, popup,
+     * toast). It floats over the app in front without pausing it, so it is never a foreground
+     * change.
+     */
+    APP_OVERLAY,
     /** Chillpill's own main UI (MainActivity, settings trampoline): a real destination. */
     OWN_MAIN_UI,
     /** Chillpill's block / re-intervention screen. */

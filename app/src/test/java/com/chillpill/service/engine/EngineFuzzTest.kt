@@ -53,7 +53,8 @@ class EngineFuzzTest {
         val instance = h.instances[pkg] ?: 1L
         return when (r.nextInt(20)) {
             0, 1, 2, 3 -> Input.Window(pkg, null, WindowKind.APP, now - r.nextLong(0, 500))
-            4 -> Input.Window("com.android.systemui", null, WindowKind.SYSTEM_OVERLAY, now)
+            4 -> if (r.nextBoolean()) Input.Window("com.android.systemui", null, WindowKind.SYSTEM_OVERLAY, now)
+                 else Input.Window(pkg, "android.app.Dialog", WindowKind.APP_OVERLAY, now)
             5 -> Input.Window(OWN, null, WindowKind.OWN_BLOCK_UI, now)
             6 -> Input.Window(OWN, null, WindowKind.OWN_MAIN_UI, now)
             7 -> Input.ScreenOff(now)
