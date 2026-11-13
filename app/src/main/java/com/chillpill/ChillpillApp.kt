@@ -5,11 +5,14 @@ import androidx.room.Room
 import com.chillpill.data.settings.BlockBackgroundStore
 import com.chillpill.data.settings.SettingsRepository
 import com.chillpill.data.restricted.RestrictedAppsRepository
+import com.chillpill.data.restricted.Restrictions
 import com.chillpill.data.suggestion.AppOpenTracker
 import com.chillpill.data.suggestion.SuggestionRepository
 import com.chillpill.data.usage.UsageDatabase
 import com.chillpill.data.usage.UsageEventsRepository
 import com.chillpill.service.engine.SessionEngine
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 
 class ChillpillApp : Application() {
 
@@ -25,6 +28,16 @@ class ChillpillApp : Application() {
             .fallbackToDestructiveMigration()
             .build()
         )
+    }
+
+    /**
+     * Restricted apps with the policy in effect for each (per-app policies, the fixed default for
+     * the rest, legacy keys included). Read by the engine and the block screens.
+     */
+    val restrictions: Flow<Restrictions> by lazy {
+        combine(restrictedAppsRepository.snapshot, settingsRepository.settings) { r, s ->
+            Restrictions.from(r.restricted, r.storedOverrides, s.legacyWaitSeconds, s.legacyGraceMinutes, r.legacyReInterventionDisabled)
+        }
     }
 
     /** The blocking pipeline's single owner of state (specs/session-engine.md). */

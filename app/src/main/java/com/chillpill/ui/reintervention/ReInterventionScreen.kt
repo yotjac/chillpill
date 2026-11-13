@@ -29,6 +29,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.chillpill.R
 import com.chillpill.ui.appblock.AppBlockPhase
+import com.chillpill.ui.appblock.DurationPicker
+import com.chillpill.ui.appblock.PickState
 
 @Composable
 fun ReInterventionScreen(
@@ -37,7 +39,8 @@ fun ReInterventionScreen(
     appName: String,
     onContinue: () -> Unit,
     onGoHome: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    pick: PickState? = null
 ) {
     val animatedProgress: Float by animateFloatAsState(
         targetValue = progress,
@@ -64,6 +67,11 @@ fun ReInterventionScreen(
             )
         }
 
+        val showKeepUsing = phase == AppBlockPhase.COMPLETED && animatedProgress >= 0.99f
+        // PICK app: the picker replaces the text once the wait is over. While waiting it takes no
+        // space, so the text is centred exactly like on other apps.
+        val showPicker = pick != null && showKeepUsing
+
         // Content: centered text + buttons at bottom
         Column(
             modifier = Modifier
@@ -80,26 +88,39 @@ fun ReInterventionScreen(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = stringResource(R.string.re_intervention_still_using),
-                    style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = appName,
-                    style = MaterialTheme.typography.displayLarge.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.primary,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = stringResource(R.string.re_intervention_chance_to_stop),
-                    style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center
-                )
+                if (!showPicker) {
+                    Text(
+                        text = stringResource(
+                            if (pick != null) R.string.re_intervention_times_up else R.string.re_intervention_still_using
+                        ),
+                        style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = appName,
+                        style = MaterialTheme.typography.displayLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.re_intervention_chance_to_stop),
+                        style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+                } else if (pick != null) {
+                    // Another round: replaces the text once the time's-up wait is over, centred.
+                    DurationPicker(
+                        title = stringResource(R.string.pick_another_round),
+                        minutes = pick.minutes,
+                        extended = pick.extended,
+                        onMinutesChange = pick.onMinutesChange,
+                        onToggleRange = pick.onToggleRange
+                    )
+                }
             }
 
             // Buttons: fixed layout from start; keep-using invisible/inactive until wait ends
@@ -121,7 +142,6 @@ fun ReInterventionScreen(
                     )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
-                val showKeepUsing = phase == AppBlockPhase.COMPLETED && animatedProgress >= 0.99f
                 OutlinedButton(
                     onClick = onContinue,
                     modifier = Modifier
@@ -133,7 +153,11 @@ fun ReInterventionScreen(
                     enabled = showKeepUsing
                 ) {
                     Text(
-                        text = stringResource(R.string.re_intervention_keep_using),
+                        text = if (pick != null) {
+                            stringResource(R.string.pick_open_for, pick.minutes)
+                        } else {
+                            stringResource(R.string.re_intervention_keep_using)
+                        },
                         style = MaterialTheme.typography.titleMedium
                     )
                 }

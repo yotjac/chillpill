@@ -6,7 +6,8 @@ import kotlin.random.Random
 
 /**
  * Random input sequences: the invariants (checked by the harness after every step) must hold,
- * and a grace deadline may only move on Continue / "+10 s" / suggestion Restrict (I5).
+ * and a grace deadline may only move on Continue / "+10 s" / suggestion Restrict (I5). Configs mix
+ * the three per-app modes and change them mid-session; a session keeps the rule it started with.
  */
 class EngineFuzzTest {
 
@@ -16,7 +17,11 @@ class EngineFuzzTest {
         repeat(SEQUENCES) { seed -> runSequence(seed) }
     }
 
+    /** Rule of each session before the current step. */
+    private val rules = HashMap<String, AppRule>()
+
     private fun runSequence(seed: Int) {
+        rules.clear()
         val r = Random(seed)
         val h = EngineHarness()
         h.autoProbe = r.nextBoolean()
@@ -38,6 +43,22 @@ class EngineFuzzTest {
             } catch (e: AssertionError) {
                 throw AssertionError("seed=$seed: ${e.message}", e)
             }
+            for ((p, st) in h.core.appStates) {
+                val s = st as? AppState.Session ?: continue
+                val wasSession = before.containsKey(p)
+                if (wasSession && input !is Input.ContinueTapped && input !is Input.SuggestionAnswered &&
+                    rules[p] != null && rules[p] != s.rule
+                ) fail("seed=$seed: session rule of $p changed ${rules[p]} -> ${s.rule} on $input")
+                val startedNow = before[p] != s.graceDeadline
+                if (startedNow && s.rule.mode == Mode.PICK && input is Input.ContinueTapped && input.pkg == p) {
+                    val len = s.graceDeadline - input.at
+                    if (len !in EngineCore.PICK_MIN_MS..EngineCore.PICK_MAX_MS || len % 60_000L != 0L) {
+                        fail("seed=$seed: PICK length $len out of range on $input")
+                    }
+                }
+            }
+            rules.clear()
+            for ((p, st) in h.core.appStates) (st as? AppState.Session)?.let { rules[p] = it.rule }
             val after = deadlines(h)
             for ((p, d) in after) {
                 val old = before[p] ?: continue
@@ -70,14 +91,26 @@ class EngineFuzzTest {
             }
             11 -> Input.BlockStopped(pkg, instance, now)
             12 -> Input.BlockClosed(pkg, CloseReason.values()[r.nextInt(3)], instance, now)
-            13, 14 -> Input.ContinueTapped(pkg, now)
+            13, 14 -> Input.ContinueTapped(
+                pkg, now,
+                chosenMs = when (r.nextInt(4)) {
+                    0 -> null
+                    1 -> r.nextLong(-60_000, 200 * 60_000L) // out of range on purpose
+                    else -> r.nextLong(1, 91) * 60_000L
+                }
+            )
             15 -> Input.ExtendTapped(pkg, now)
             16 -> Input.WarningDismissed(pkg, now)
             17 -> Input.SuggestionEligible(pkg, "name", now)
             18 -> Input.SuggestionAnswered(pkg, SuggestionAnswer.values()[r.nextInt(3)], now)
             else -> {
-                val restricted = setOf(X, N, S).filter { r.nextInt(4) != 0 }.toSet()
-                Input.ConfigChanged(Config(restricted, setOf(N).filter { r.nextBoolean() }.toSet(), GRACE), now)
+                fun rule() = AppRule(
+                    Mode.values()[r.nextInt(3)],
+                    r.nextLong(1, 4) * 30_000L,
+                    extensionAllowed = r.nextBoolean()
+                )
+                val restricted = setOf(X, N, S).filter { r.nextInt(4) != 0 }
+                Input.ConfigChanged(Config(restricted.associateWith { rule() }, rule()), now)
             }
         }
     }

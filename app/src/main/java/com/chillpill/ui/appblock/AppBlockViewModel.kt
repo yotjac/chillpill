@@ -3,8 +3,11 @@ package com.chillpill.ui.appblock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.chillpill.ChillpillApp
+import com.chillpill.data.restricted.AppPolicy
 import com.chillpill.data.settings.BlockBackground
+import com.chillpill.service.engine.Mode
 import com.chillpill.service.engine.CloseReason
+import com.chillpill.service.engine.EngineCore
 import com.chillpill.service.engine.Input
 import com.chillpill.service.engine.SessionEngine
 import kotlinx.coroutines.Dispatchers
@@ -39,8 +42,32 @@ class AppBlockViewModel(
     private val _progress = MutableStateFlow(0f)
     val progress: StateFlow<Float> = _progress.asStateFlow()
 
-    private val _openCount24h = MutableStateFlow(0)
-    val openCount24h: StateFlow<Int> = _openCount24h.asStateFlow()
+    /**
+     * PICK app: after the wait the screen shows the duration picker instead of Continue
+     * (specs/per-app-modes.md). Known once the policy has been read.
+     */
+    private val _isPick = MutableStateFlow(false)
+    val isPick: StateFlow<Boolean> = _isPick.asStateFlow()
+
+    /** The wait is 0 s (PICK only): show the completed content without the fill animation. */
+    private val _instant = MutableStateFlow(false)
+    val instant: StateFlow<Boolean> = _instant.asStateFlow()
+
+    /** Picker value in minutes; kept here so it survives rotation. */
+    private val _pickMinutes = MutableStateFlow(PICK_START_MINUTES)
+    val pickMinutes: StateFlow<Int> = _pickMinutes.asStateFlow()
+
+    /** Picker range: 1–30 min, or 1–90 after "need longer?". Resets with every new block screen. */
+    private val _pickExtended = MutableStateFlow(false)
+    val pickExtended: StateFlow<Boolean> = _pickExtended.asStateFlow()
+
+    /**
+     * Open attempts in the last 24 h, shown on the block screen. Read when the screen opens (the
+     * text is revealed by the wait's fill, so it must be known from the start) and once more when
+     * the wait ends; null until the first read.
+     */
+    private val _openCount24h = MutableStateFlow<Int?>(null)
+    val openCount24h: StateFlow<Int?> = _openCount24h.asStateFlow()
 
     /**
      * Background image for the block screen. Null until the setting has been read, so the screen
@@ -57,12 +84,23 @@ class AppBlockViewModel(
         viewModelScope.launch { runWaitTimer() }
     }
 
+    private suspend fun loadOpenCount() {
+        _openCount24h.value = withContext(Dispatchers.IO) {
+            app.usageEventsRepository.getOpenInterceptCountLast24h(packageName)
+        }
+    }
+
     private suspend fun runWaitTimer() {
         if (packageName.isBlank()) return
-        val settings = withContext(Dispatchers.IO) {
-            app.settingsRepository.settings.first()
+        viewModelScope.launch { loadOpenCount() }
+        val policy = withContext(Dispatchers.IO) {
+            app.restrictions.first().policyFor(packageName)
         }
-        val waitTimeSeconds = settings.waitTimeSeconds.coerceAtLeast(1)
+        _isPick.value = policy.mode == Mode.PICK
+        // Opening wait, or the "time's up" wait on a re-intervention. Only PICK may wait 0 s.
+        val waitTimeSeconds = policy.waitSeconds(isReIntervention)
+            .coerceAtLeast(AppPolicy.minOpenWaitSeconds(policy.mode))
+        _instant.value = waitTimeSeconds == 0
         val tickMs = 100L
         val totalMs = waitTimeSeconds * 1000L
         var elapsedMs = 0L
@@ -73,10 +111,8 @@ class AppBlockViewModel(
         }
         _progress.value = 1f
         _phase.value = AppBlockPhase.COMPLETED
-        val count = withContext(Dispatchers.IO) {
-            app.usageEventsRepository.getOpenInterceptCountLast24h(packageName)
-        }
-        _openCount24h.value = count
+        // Again: this screen's own OPEN_ATTEMPT may not have been written yet at the first read.
+        loadOpenCount()
     }
 
     /**
@@ -85,9 +121,24 @@ class AppBlockViewModel(
      */
     val instance: Long = android.os.SystemClock.elapsedRealtimeNanos()
 
-    /** Continue: the engine starts the grace period and records WAIT_COMPLETED. */
+    fun onPickMinutesChanged(minutes: Int) {
+        _pickMinutes.value = minutes.coerceIn(1, pickMaxMinutes())
+    }
+
+    fun onPickRangeToggled() {
+        _pickExtended.value = !_pickExtended.value
+        _pickMinutes.value = _pickMinutes.value.coerceAtMost(pickMaxMinutes())
+    }
+
+    private fun pickMaxMinutes() = if (_pickExtended.value) PICK_EXTENDED_MAX_MINUTES else PICK_MAX_MINUTES
+
+    /**
+     * Continue: the engine starts the grace period and records WAIT_COMPLETED. For a PICK app it
+     * gets the picked length (the engine clamps it again, so a stale policy here is harmless).
+     */
     fun onContinue() {
-        app.sessionEngine.send(Input.ContinueTapped(packageName, SessionEngine.now()))
+        val chosenMs = if (_isPick.value) _pickMinutes.value * 60_000L else null
+        app.sessionEngine.send(Input.ContinueTapped(packageName, SessionEngine.now(), chosenMs))
         viewModelScope.launch { _events.send(AppBlockEvent.RequestFinish) }
     }
 
@@ -108,4 +159,13 @@ class AppBlockViewModel(
      */
     fun onClosed(reason: CloseReason) =
         app.sessionEngine.send(Input.BlockClosed(packageName, reason, instance, SessionEngine.now()))
+
+    companion object {
+        const val PICK_START_MINUTES = 5
+        const val PICK_MAX_MINUTES = 30
+        /** The engine's own limit (it clamps whatever the picker sends). */
+        val PICK_EXTENDED_MAX_MINUTES = (EngineCore.PICK_MAX_MS / 60_000L).toInt()
+        val PICK_QUICK_MINUTES = listOf(5, 10, 15, 20, 25, 30)
+        val PICK_EXTENDED_QUICK_MINUTES = listOf(15, 30, 45, 60, 75, 90)
+    }
 }

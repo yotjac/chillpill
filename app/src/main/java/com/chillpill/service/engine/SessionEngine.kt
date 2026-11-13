@@ -15,8 +15,6 @@ import com.chillpill.ChillpillApp
 import com.chillpill.ChillpillSettingsActivity
 import com.chillpill.MainActivity
 import com.chillpill.ReInterventionActivity
-import com.chillpill.data.restricted.RestrictedAppsSnapshot
-import com.chillpill.data.settings.Settings
 import com.chillpill.data.usage.UsageEventType
 import com.chillpill.service.ForegroundPackageQuery
 import com.chillpill.service.GraceNotificationService
@@ -32,7 +30,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.retryWhen
@@ -147,9 +145,7 @@ class SessionEngine(private val app: ChillpillApp) {
     }
 
     private fun configFlow(): Flow<Config> =
-        combine(app.restrictedAppsRepository.snapshot, app.settingsRepository.settings) { r: RestrictedAppsSnapshot, s: Settings ->
-            Config(r.restricted, r.reInterventionDisabled, s.gracePeriodMinutes * 60_000L)
-        }.distinctUntilChanged()
+        app.restrictions.map { it.config() }.distinctUntilChanged()
 
     private fun initialScreenState(): Input {
         val power = app.getSystemService(Context.POWER_SERVICE) as? PowerManager

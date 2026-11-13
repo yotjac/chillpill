@@ -19,6 +19,15 @@
     <string name="re_intervention_still_using">still using</string>
     <string name="re_intervention_chance_to_stop">this is your chance to stop</string>
     <string name="re_intervention_keep_using">keep using the app</string>
+    <string name="re_intervention_times_up">time\'s up on</string>
+
+    <!-- Duration picker ("Pick your time" apps) -->
+    <string name="pick_title">how long do you need?</string>
+    <string name="pick_another_round">take another round?</string>
+    <string name="pick_minutes">%1$d min</string>
+    <string name="pick_open_for">open for %1$d min</string>
+    <string name="pick_need_longer">need longer?</string>
+    <string name="pick_shorter_range">back to 1–%1$d min</string>
 
     <!-- Services -->
     <string name="grace_notification_title">Chillpill – grace period</string>
@@ -84,9 +93,9 @@
     <!-- Settings -->
     <string name="settings_title">Settings</string>
     <string name="settings_waiting">Waiting…</string>
-    <string name="settings_section_configuration">Configuration</string>
-    <string name="settings_wait_time_label">Wait time (seconds)</string>
-    <string name="settings_grace_period_label">Grace period (minutes)</string>
+    <string name="settings_section_loosening">Loosening your limits</string>
+    <string name="settings_confirmation_wait_label">Wait before saving looser settings (seconds)</string>
+    <string name="settings_confirmation_wait_hint">Lowering this also needs the current wait.</string>
     <string name="settings_section_background">Waiting screen image</string>
     <string name="settings_background_import_failed">Couldn\'t use that image. Try another one.</string>
     <string name="settings_section_restricted_apps">Restricted apps</string>
@@ -96,7 +105,22 @@
     <string name="settings_remove_from_restricted">Remove from restricted</string>
     <string name="settings_collapse">Collapse settings</string>
     <string name="settings_expand">Expand settings</string>
-    <string name="settings_block_again_after_grace">Block again after grace</string>
+    <string name="policy_when_i_open">When I open %1$s</string>
+    <string name="policy_mode_pause">Pause only</string>
+    <string name="policy_mode_pause_description">Wait, then use it freely</string>
+    <string name="policy_mode_limit">Time limit</string>
+    <string name="policy_mode_limit_description">Wait, then get %1$d min, then it closes</string>
+    <string name="policy_mode_pick">Pick your time</string>
+    <string name="policy_mode_pick_description">Wait, then choose how long each visit lasts</string>
+    <string name="policy_open_wait">Wait when opening (seconds)</string>
+    <string name="policy_free_reentry">Free re-entry for (minutes)</string>
+    <string name="policy_time_allowed">Time allowed (minutes)</string>
+    <string name="policy_times_up_wait">Wait when time\'s up (seconds)</string>
+    <string name="policy_pick_again_wait">Wait before picking again (seconds)</string>
+    <string name="policy_allow_extension">Allow \"+10 s\" once</string>
+    <string name="policy_summary_pause">%1$s · %2$d s · %3$d min re-entry</string>
+    <string name="policy_summary_limit">%1$s · %2$d s · %3$d min</string>
+    <string name="policy_summary_pick">%1$s · %2$d s</string>
     <string name="settings_delta_removed">-%1$d</string>
     <string name="settings_delta_added">+%1$d</string>
 

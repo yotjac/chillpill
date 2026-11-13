@@ -45,12 +45,46 @@ enum class UsageKind {
     GRACE_EXTENDED
 }
 
-data class Config(
-    val restricted: Set<String>,
-    /** Restricted apps with "Block again after grace" OFF. */
-    val noReblock: Set<String>,
-    val graceMs: Long
+/** How Chillpill steps in for a restricted app (specs/per-app-modes.md). */
+enum class Mode {
+    /** Wait, then use freely: grace is a free re-entry window and never ends in a block (G1, E7). */
+    PAUSE_ONLY,
+    /** Wait, then a fixed amount of time; re-intervention when it runs out in the app (G2). */
+    TIME_LIMIT,
+    /** Wait, then the user picks the visit length ([Input.ContinueTapped.chosenMs]); expires like TIME_LIMIT. */
+    PICK
+}
+
+/** What the engine needs to know about one restricted app. Wait times are UI-only and not in here. */
+data class AppRule(
+    val mode: Mode,
+    /** PAUSE_ONLY: free re-entry window. TIME_LIMIT: time allowed. PICK: unused. */
+    val graceMs: Long,
+    /** Whether the first warning pill offers "+10 s" (TIME_LIMIT / PICK). */
+    val extensionAllowed: Boolean = true
 )
+
+data class Config(
+    /** Effective rule per restricted package (overrides already resolved against the defaults). */
+    val rules: Map<String, AppRule>,
+    /** Rule of an app restricted from the suggestion popup (A8): new apps follow the defaults. */
+    val defaultRule: AppRule
+) {
+    val restricted: Set<String> get() = rules.keys
+
+    companion object {
+        /**
+         * The pre-per-app-modes shape: one grace for all apps, [noReblock] apps are PAUSE_ONLY and
+         * the rest TIME_LIMIT. Used for old traces and by tests.
+         */
+        fun legacy(restricted: Set<String>, noReblock: Set<String>, graceMs: Long): Config = Config(
+            rules = restricted.associateWith {
+                AppRule(if (it in noReblock) Mode.PAUSE_ONLY else Mode.TIME_LIMIT, graceMs)
+            },
+            defaultRule = AppRule(Mode.TIME_LIMIT, graceMs)
+        )
+    }
+}
 
 /** The engine's single belief about where the user is. */
 data class Presence(
@@ -82,9 +116,14 @@ sealed interface AppState {
     /** The user passed the block and has not been blocked since. */
     data class Session(
         val graceDeadline: Long,
+        /**
+         * The app's rule when the session started. Settings changes apply from the next session,
+         * so a running session never changes mode under the user.
+         */
+        val rule: AppRule,
         val extensionsUsed: Int = 0,
         val firstWarningDismissed: Boolean = false,
-        /** No-re-block apps only: grace ran out, the user may stay (and return within 10 s). */
+        /** PAUSE_ONLY only: grace ran out, the user may stay (and return within 10 s). */
         val graceOver: Boolean = false,
         /** When the user left the app; null exactly while the user is in it (invariant I2). */
         val leftAt: Long? = null,
@@ -122,7 +161,11 @@ sealed interface Input {
     data class BlockStarted(val pkg: String, val instance: Long, override val at: Long) : Input
     data class BlockStopped(val pkg: String, val instance: Long, override val at: Long) : Input
     data class BlockClosed(val pkg: String, val reason: CloseReason, val instance: Long, override val at: Long) : Input
-    data class ContinueTapped(val pkg: String, override val at: Long) : Input
+    /**
+     * Continue on a block screen. [chosenMs] is the visit length picked on a PICK app's picker;
+     * ignored for other modes. Null in traces recorded before per-app modes.
+     */
+    data class ContinueTapped(val pkg: String, override val at: Long, val chosenMs: Long? = null) : Input
 
     data class ExtendTapped(val pkg: String, override val at: Long) : Input
     data class WarningDismissed(val pkg: String, override val at: Long) : Input

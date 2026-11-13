@@ -7,7 +7,10 @@ import android.util.Log
 import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.WindowManager
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
@@ -113,7 +116,14 @@ class GraceWarningOverlayManager(
                             extensionConfirmed = current.extensionConfirmed,
                             onExtend = { onExtend(current.pkg) },
                             // The engine answers with a new warning (null, or the final countdown).
-                            onDismiss = { onDismiss(current.pkg) }
+                            onDismiss = { onDismiss(current.pkg) },
+                            // Transparent room around the pill inside the WRAP_CONTENT window: the
+                            // "10 s added" bounce (scale 1.06) and the shadow draw outside the
+                            // pill's bounds and were clipped at the window edge.
+                            modifier = Modifier.padding(
+                                horizontal = PILL_BLEED_HORIZONTAL_DP.dp,
+                                vertical = PILL_BLEED_VERTICAL_DP.dp
+                            )
                         )
                     }
                 }
@@ -137,7 +147,9 @@ class GraceWarningOverlayManager(
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                y = dp(FALLBACK_STATUS_BAR_DP + PILL_MARGIN_DP)
+                // The window is taller than the pill by the bleed: shift it up so the pill
+                // itself stays PILL_MARGIN_DP below the status bar.
+                y = dp(FALLBACK_STATUS_BAR_DP + PILL_MARGIN_DP - PILL_BLEED_VERTICAL_DP)
             }
 
             // The real status-bar inset is only known once the window is attached; until then the
@@ -146,7 +158,7 @@ class GraceWarningOverlayManager(
                 try {
                     val top = WindowInsetsCompat.toWindowInsetsCompat(insets, v)
                         .getInsets(WindowInsetsCompat.Type.statusBars()).top
-                    val desired = top + dp(PILL_MARGIN_DP)
+                    val desired = top + dp(PILL_MARGIN_DP - PILL_BLEED_VERTICAL_DP)
                     val current = layoutParams
                     if (top > 0 && current != null && current.y != desired) {
                         current.y = desired
@@ -230,5 +242,8 @@ class GraceWarningOverlayManager(
     private companion object {
         const val FALLBACK_STATUS_BAR_DP = 24
         const val PILL_MARGIN_DP = 8
+        /** Room for the bounce (6 % of up to 320 dp ≈ 10 dp per side) and the 6 dp shadow. */
+        const val PILL_BLEED_HORIZONTAL_DP = 12
+        const val PILL_BLEED_VERTICAL_DP = 8
     }
 }

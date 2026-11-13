@@ -84,7 +84,7 @@ them manually, or leave the verification step for the human.
   `EngineCoreTest`; the fuzz test and invariant checker must stay green.
 - Only one thread touches the core (`SessionEngine`'s `limitedParallelism(1)` scope). Keep it.
 - Leaving a restricted app never extends grace. Grace is fixed at Continue; leaving only
-  timestamps the exit for the 10 s return window of apps with "Block again after grace" off. Do
+  timestamps the exit for the 10 s return window of *Pause only* apps. Do
   not reintroduce "leaving refreshes grace": it let those apps skip the block forever (see
   `specs/no-reblock-apps-session-fix.md`).
 - A restricted app's own window events in the first 2 s after its block appears (splash → main)
@@ -107,6 +107,10 @@ them manually, or leave the verification step for the human.
   *only* resumed package put presence back. Keep both conditions; without them a probe taken
   mid-switch or in split screen would move presence wrongly. Do not query UsageStats with a fixed
   look-back window either: an activity resumed before the window looks like "nothing in front".
+- **Per-app modes** (`specs/per-app-modes.md`): a session keeps the `AppRule` it started with
+  (`Session.rule`); read the mode from there, never from the current config, or a settings change
+  mixes modes mid-session. Wait times are UI-only (`AppBlockViewModel` reads `AppPolicy`); the
+  engine only gets mode, grace and "+10 s allowed", and clamps a picked length itself (1–90 min).
 - `GraceNotificationService` is cosmetic. Never put timers or session logic back into it.
 - Room is configured with `allowMainThreadQueries()` and
   `fallbackToDestructiveMigration()`. Bump the DB version when the schema changes; there

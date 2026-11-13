@@ -23,6 +23,7 @@ import com.chillpill.service.engine.CloseReason
 import com.chillpill.ui.appblock.AppBlockEvent
 import com.chillpill.ui.appblock.AppBlockScreen
 import com.chillpill.ui.appblock.AppBlockViewModel
+import com.chillpill.ui.appblock.rememberPickState
 import com.chillpill.ui.theme.ChillpillTheme
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
@@ -105,7 +106,8 @@ class AppBlockActivity : ComponentActivity() {
                     appName = appName,
                     background = background,
                     onContinue = viewModel::onContinue,
-                    onGoHome = viewModel::onGoHome
+                    onGoHome = viewModel::onGoHome,
+                    pick = rememberPickState(viewModel)
                 )
             }
         }

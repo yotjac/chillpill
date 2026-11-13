@@ -1,5 +1,7 @@
 package com.chillpill.data.settings
 
+import com.chillpill.data.restricted.PolicyResolver
+
 /**
  * Background image shown on the block ("waiting") screen.
  *
@@ -43,10 +45,14 @@ sealed interface BlockBackground {
 }
 
 /**
- * User-configurable settings for wait time, grace period and the block screen background.
+ * Global settings: the wait before saving looser settings and the block screen background.
+ * Per-app policies live with the restricted apps ([com.chillpill.data.restricted.AppPolicy],
+ * specs/per-app-modes.md).
  */
 data class Settings(
-    val waitTimeSeconds: Int = 12,
-    val gracePeriodMinutes: Int = 5,
-    val blockBackground: BlockBackground = BlockBackground.Default
+    val confirmationWaitSeconds: Int = PolicyResolver.DEFAULT_CONFIRMATION_WAIT_SECONDS,
+    val blockBackground: BlockBackground = BlockBackground.Default,
+    /** Read only: the single wait / grace from before per-app modes, if one was ever saved. */
+    val legacyWaitSeconds: Int? = null,
+    val legacyGraceMinutes: Int? = null
 )

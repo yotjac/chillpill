@@ -34,7 +34,7 @@ class TraceReplayTest {
 
     @Test fun codec_roundTripsEveryInputType() {
         val inputs = listOf(
-            Input.ConfigChanged(Config(setOf(X, N), setOf(N), GRACE), 1),
+            Input.ConfigChanged(Config.legacy(setOf(X, N), setOf(N), GRACE), 1),
             Input.ProcessStarted("reason=10 (USER_REQUESTED)", 2),
             Input.Window(X, "a.B", WindowKind.APP, 3),
             Input.ScreenOff(4), Input.ScreenOn(true, 5), Input.UserPresent(6),

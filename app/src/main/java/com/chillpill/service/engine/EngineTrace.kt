@@ -64,8 +64,24 @@ object TraceCodec {
         }
         if (o.get("k")?.asString != "in") return@mapNotNull null
         val type = inputTypes[o.get("type")?.asString] ?: return@mapNotNull null
-        gson.fromJson(o.get("v"), type)
+        val v = o.get("v")
+        legacyConfigChanged(v) ?: gson.fromJson(v, type)
     }.toList()
+
+    /**
+     * Traces recorded before per-app modes store `{restricted, noReblock, graceMs}` as the config;
+     * turn that into the equivalent rules so old traces replay unchanged.
+     */
+    private fun legacyConfigChanged(v: com.google.gson.JsonElement?): Input.ConfigChanged? {
+        val config = (v as? JsonObject)?.getAsJsonObject("config") ?: return null
+        if (config.has("rules") || !config.has("restricted")) return null
+        fun strings(key: String): Set<String> =
+            config.getAsJsonArray(key)?.map { it.asString }?.toSet() ?: emptySet()
+        return Input.ConfigChanged(
+            Config.legacy(strings("restricted"), strings("noReblock"), config.get("graceMs").asLong),
+            v.get("at").asLong
+        )
+    }
 }
 
 /**

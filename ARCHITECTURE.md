@@ -10,8 +10,10 @@
 Chillpill is a screen-time reduction tool. When the user opens a restricted app, an
 **AccessibilityService** intercepts the launch and presents a **block screen** with a
 configurable wait timer. After the timer completes, the user may either go home or
-continue into the app with a time-limited **grace period**. When the grace period expires
-the block screen reappears.
+continue into the app. What happens next depends on the app's **mode** (per app, see
+`specs/per-app-modes.md`): *Pause only* lets the user stay; *Time limit* gives a fixed
+**grace period** and shows a re-intervention screen when it expires in the app; *Pick your time*
+lets the user choose the length on a slider first, then behaves like Time limit.
 
 Additionally, when the user opens a **non-restricted** app and has accumulated more than
 30 minutes of foreground time for it in the last 12 hours (across any number of separate
@@ -27,10 +29,13 @@ Key concepts:
 | Term | Meaning |
 |------|---------|
 | **Restricted app** | An app the user chose to restrict |
-| **Wait time** | Seconds the user must wait on the block screen (default 12, range 1–7200) |
-| **Grace period** | Minutes the user can use the app after waiting (default 5, range 1–1440) |
-| **Re-intervention** | A second block shown when the grace period expires while the user is still in the restricted app; can be toggled per restricted app |
-| **Grace-expiry warning** | A small non-modal pill shown over the app for the last 10 s of a grace period, but only when re-intervention is enabled (i.e. the user is about to be kicked out). It offers one "+10 s" extension per grace window and can be tapped away. Whenever that first warning is not showing (extension spent, tapped away), a countdown-only warning that cannot be dismissed appears for the last 5 s |
+| **Policy / mode** | Per restricted app (`AppPolicy`): mode `PAUSE_ONLY` / `TIME_LIMIT` / `PICK` plus its numbers. Apps follow the **default policy** unless they have their own (an override) |
+| **Wait when opening** | Seconds on the block screen (default 12, range 1–7200; 0 allowed only in Pick your time) |
+| **Wait when time's up** | Seconds on the re-intervention screen (Time limit / Pick your time), independent of the opening wait |
+| **Grace period** | Pause only: free re-entry window. Time limit: time allowed. Pick your time: the length picked (1–90 min). Range 1–1440 min |
+| **Re-intervention** | A second block shown when the grace period expires while the user is still in a Time limit / Pick your time app (Pick: the picker comes back after the wait) |
+| **Confirmation wait** | Global wait before saving looser settings (default 10 s; lowering it is itself looser) |
+| **Grace-expiry warning** | A small non-modal pill shown over the app for the last 10 s of a grace period, only for apps that get stopped (not Pause only). It offers one "+10 s" extension per grace window (unless the app's policy turns that off) and can be tapped away. Whenever that first warning is not showing (extension spent, tapped away), a countdown-only warning that cannot be dismissed appears for the last 5 s |
 | **Suggestion popup** | A dialog shown when a non-restricted, non-excluded app is opened and has accumulated >30 min of foreground time in the last 12 h (cumulative, not a single sitting); offers to restrict it |
 | **Excluded app** | An app that never triggers a suggestion popup — either hardcoded (browsers, utilities, etc.) or user-chosen via "Never ask me again about [app name]" |
 
@@ -87,9 +92,10 @@ com.chillpill/
 │
 ├── data/
 │   ├── restricted/
-│   │   └── RestrictedAppsRepository.kt DataStore for restricted package-name set
+│   │   ├── AppPolicy.kt               Pure: AppPolicy (per-app mode + waits), codec, PolicyResolver (legacy fallback), Restrictions
+│   │   └── RestrictedAppsRepository.kt DataStore for restricted package-name set + per-app policy overrides
 │   ├── settings/
-│   │   ├── Settings.kt                Data class (waitTimeSeconds, gracePeriodMinutes, blockBackground) + BlockBackground
+│   │   ├── Settings.kt                Data class (confirmationWaitSeconds, blockBackground, legacy wait/grace) + BlockBackground
 │   │   ├── BlockBackgrounds.kt        Registry of the block-screen images bundled in the APK
 │   │   ├── BlockBackgroundStore.kt    Imports/stores the user's own block-screen photo in filesDir/backgrounds/
 │   │   └── SettingsRepository.kt      DataStore for settings + setupCompleted flag
@@ -123,12 +129,15 @@ com.chillpill/
 app/src/test/java/com/chillpill/service/engine/   JVM tests: EngineCoreTest (scenarios), EngineFuzzTest,
                                                   WindowClassifierTest, ForegroundResolverTest,
                                                   TraceReplayTest (+ resources/traces/)
-app/src/test/java/com/chillpill/ui/settings/RestrictionReducingTest.kt   JVM unit tests for isRestrictionReducing
+app/src/test/java/com/chillpill/ui/settings/RestrictionReducingTest.kt   JVM unit tests for isRestrictionReducing / isPolicyLooser / PolicyDraft
+app/src/test/java/com/chillpill/data/restricted/AppPolicyTest.kt         JVM unit tests for AppPolicy codec + legacy resolution
+app/src/test/java/com/chillpill/service/engine/PerAppModesTest.kt        Engine scenarios for the three modes
 │
 └── ui/
     ├── appblock/
-    │   ├── AppBlockScreen.kt          Block screen composable (wait animation, continue/go-home, background image)
-    │   └── AppBlockViewModel.kt       Wait timer logic, event recording
+    │   ├── AppBlockScreen.kt          Block screen composable (fill reveals the attempts text, continue/go-home, background image)
+    │   ├── AppBlockViewModel.kt       Per-app wait timer (opening / time's up), picker state, event recording
+    │   └── DurationPicker.kt          "How long do you need?" slider + quick chips for Pick your time apps
     ├── reintervention/
     │   └── ReInterventionScreen.kt    Re-intervention composable (animated fill, cyan app name, go-home + keep-using)
     ├── common/
@@ -145,7 +154,9 @@ app/src/test/java/com/chillpill/ui/settings/RestrictionReducingTest.kt   JVM uni
     │   ├── AppSelectionScreen.kt      Searchable list of installed apps with checkboxes
     │   ├── BlockBackgroundPicker.kt    Thumbnail row for choosing the block-screen image
     │   ├── SettingsConfirmationScreen.kt  Waiting screen before saving restriction-reducing changes
-    │   ├── SettingsScreen.kt          Wait time, grace period inputs, restricted apps list, Save button
+    │   ├── SettingsScreen.kt          "Loosening your limits", background, restricted app cards (per-app policy), Save button
+    │   ├── PolicyEditor.kt            Mode rows + the fields of the selected mode (on each restricted app card)
+    │   ├── PolicyDraft.kt             Pure: editable policy, isPolicyLooser, isRestrictionReducing
     │   └── SettingsViewModel.kt       Draft state, deferred save, confirmation timer, installed-app loading
     ├── statistics/
     │   ├── StatisticsScreen.kt        Time-range selector, per-app bar charts
@@ -202,6 +213,7 @@ class ChillpillApp : Application() {
     val appOpenTracker      by lazy { AppOpenTracker() }
     val suggestionRepository by lazy { SuggestionRepository(this) }
     val usageEventsRepository   by lazy { UsageEventsRepository(Room.databaseBuilder(...).build()) }
+    val restrictions        by lazy { combine(restricted snapshot, settings) -> Restrictions }  // policy per app, see §5.2
     val sessionEngine       by lazy { SessionEngine(this) }   // the blocking pipeline, see §6
 }
 ```
@@ -216,9 +228,10 @@ repository properties. No Hilt, Dagger, or Koin.
 ### 5.1 SettingsRepository (DataStore)
 
 - **Store name:** `"settings"`
-- **Keys:** `wait_time_seconds` (Int, default 12), `grace_period_minutes` (Int, default 5), `setup_completed` (Boolean), `block_background` (String, default absent)
+- **Keys:** `confirmation_wait_seconds` (Int), `setup_completed` (Boolean), `block_background` (String, default absent). Legacy, read only: `wait_time_seconds`, `grace_period_minutes` (exposed as `Settings.legacyWaitSeconds` / `legacyGraceMinutes` for `PolicyResolver`).
+- **Confirmation wait fallback:** `confirmation_wait_seconds` falls back to `wait_time_seconds` (an upgrade never shortens the old confirmation wait), then 12 s for a set-up install that never saved, else 10 s.
 - **Exposed flows:** `settings: Flow<Settings>`, `setupCompleted: Flow<Boolean>`
-- **Write methods:** `setWaitTimeSeconds`, `setGracePeriodMinutes`, `setBlockBackground`, `setSettings`, `setSetupCompleted`
+- **Write methods:** `setBlockBackground`, `setSettings`, `setSetupCompleted`
 - **`block_background`** encodes the block-screen image as `builtin:<id>` or `custom:<fileName>`, decoded by `BlockBackground.decode`. Anything missing, unknown or containing path separators falls back to the default, so older installs need no migration.
 
 ### 5.1.1 BlockBackgroundStore (files)
@@ -231,9 +244,10 @@ repository properties. No Hilt, Dagger, or Koin.
 ### 5.2 RestrictedAppsRepository (DataStore)
 
 - **Store name:** `"restricted_apps"`
-- **Keys:** `package_names` (String Set), `re_intervention_disabled` (String Set of package names that skip re-intervention)
-- **Exposed flows:** `restrictedPackages: Flow<Set<String>>`, `reInterventionDisabledPackages: Flow<Set<String>>`
-- **Write methods:** `setRestricted(packageNames: Set<String>)`, `addRestricted(packageName: String)`, `setReInterventionDisabled(packageNames: Set<String>)`
+- **Keys:** `package_names` (String Set), `policy_overrides` (String, JSON map package → `AppPolicy`; only policies that differ from the fixed `AppPolicy.DEFAULT` = Time limit, 10 s / 10 s, 5 min; apps not in it get the default). Legacy, read only: `re_intervention_disabled`. **Legacy fallback (no migration write):** while `policy_overrides` is absent and any legacy key exists, every restricted app keeps its old behaviour (`TIME_LIMIT`, opening and time's-up wait = `wait_time_seconds` or 12, minutes = `grace_period_minutes` or 5; `PAUSE_ONLY` if in `re_intervention_disabled`). The first Save writes `policy_overrides`; the legacy keys stay for one release.
+- **Exposed flows:** `restrictedPackages: Flow<Set<String>>`, `snapshot: Flow<RestrictedAppsSnapshot>` (restricted set + stored overrides + legacy set from one read)
+- **Write methods:** `setRestricted` (setup flow), `setRestrictedWithOverrides` (Settings Save; drops overrides of unrestricted apps), `addRestricted` (suggestion popup; the app gets the default policy)
+- **`ChillpillApp.restrictions`** combines this snapshot with the legacy keys from the settings into `Restrictions` (restricted set, resolved overrides): `policyFor(pkg)` for the block screens, `config()` for the engine. `AppPolicy.toRule()` is what the engine sees (`AppRule`: mode, grace, "+10 s" allowed); the waits never reach the engine.
 
 ### 5.3 UsageEventsRepository (Room)
 
@@ -348,12 +362,19 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
   that check 1.2 s later; a session that ends "while away" (G3) schedules follow-up probes, so a
   blip right before the deadline still leads to a block. Never applies in split screen (two
   resumed packages) or without usage access (no result).
+- **Config** (`Config(rules, defaultRule)`): one `AppRule(mode, graceMs, extensionAllowed)` per
+  restricted app; `defaultRule` is used for an app restricted from the suggestion popup (A8; PICK
+  defaults would give `PICK_FALLBACK_MS` = 5 min; the default is Time limit 5 min). `Config.legacy(...)` builds the old one-grace shape
+  (old traces, tests).
 - **Per-app state** (`AppState`): Idle (no entry) · `Blocking(kind, shownAt, uiVisible, instance)` ·
-  `Session(graceDeadline, extensionsUsed, firstWarningDismissed, graceOver, leftAt)`.
-  `leftAt == null` exactly while the user is in the app (invariant I2).
-- Entering a restricted app: grace valid → allow; no-re-block app back within 10 s → allow;
-  otherwise block. Leaving never moves a deadline (I5). Grace expiry: no-re-block → `graceOver`,
-  session stays; re-intervention app in front → re-intervention; away → Idle.
+  `Session(graceDeadline, rule, extensionsUsed, firstWarningDismissed, graceOver, leftAt)`.
+  `leftAt == null` exactly while the user is in the app (invariant I2). `rule` is a snapshot taken
+  at Continue: a settings change applies from the next session.
+- Continue: TIME_LIMIT / PAUSE_ONLY → `rule.graceMs`; PICK → `ContinueTapped.chosenMs` rounded to
+  whole minutes and clamped to 1–90 min (5 min if missing). The engine never trusts the UI beyond that.
+- Entering a restricted app: grace valid → allow; PAUSE_ONLY app back within 10 s → allow;
+  otherwise block. Leaving never moves a deadline (I5). Grace expiry: PAUSE_ONLY → `graceOver`,
+  session stays; TIME_LIMIT / PICK app in front → re-intervention; away → Idle.
 - **Block screen lifecycle:** the activity reports `BlockStarted/Stopped/Closed` with an instance id
   (from `AppBlockViewModel.instance`). The app's own window events in the first 2 s after its block
   appears (splash → main) are absorbed. Getting past the block (shade → notification, recents,
@@ -363,15 +384,16 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
   re-block. `LEFT_APP` is recorded exactly once, by state.
 - **Derived state:** `warning(now)` (the pill: first warning with "+10 s" in the last 10 s unless
   extended or ×'d, otherwise a non-dismissible countdown in the last 5 s; only over the app in front,
-  only with re-intervention on), `suggestion`, `graceActive()`, `nextWakeUp(now)`.
+  never for PAUSE_ONLY; "+10 s" only if `rule.extensionAllowed`), `suggestion`, `graceActive()`,
+  `nextWakeUp(now)`.
 - `invariantViolations(now)` checks I1–I4; tests run it after every step, the host logs violations.
 
 ### 6.2 SessionEngine (host, `service/engine/SessionEngine.kt`)
 
 - Lazy singleton in `ChillpillApp`, started by the accessibility service (`start()` is idempotent).
 - One `Channel<Input>` drained on `Dispatchers.Default.limitedParallelism(1)`; `send()` is
-  thread-safe and never blocks. Inputs queue until the first config (restricted apps +
-  re-intervention-disabled set + grace length, from DataStore as a hot flow) has been applied.
+  thread-safe and never blocks. Inputs queue until the first config (`ChillpillApp.restrictions`
+  mapped to `Config`, a hot flow over both DataStores) has been applied.
 - Executes effects off the engine thread (activities, Room, UsageStats, repositories).
 - Publishes `warning`, `suggestion`, `graceActive` as `StateFlow`s and keeps one wake-up timer at
   `nextWakeUp`. A late wake-up (deep sleep) is harmless: the next input processes overdue deadlines
@@ -410,9 +432,10 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
 - `GraceNotificationService`: the ongoing notification while `graceActive`; started by the engine on
   every false→true transition, stops itself with `stopSelfResult(lastStartId)` when grace ends.
   **Cosmetic only** — no timers, no session logic.
-- `AppBlockActivity` / `ReInterventionActivity` + `AppBlockViewModel`: wait timer and UI; send
-  `ContinueTapped`, `BlockClosed(GO_HOME | BACK | SYSTEM_GESTURE)`, `BlockStarted/Stopped`, and
-  launch the target app after Continue.
+- `AppBlockActivity` / `ReInterventionActivity` + `AppBlockViewModel`: wait timer and UI (the
+  app's opening wait, or its time's-up wait on a re-intervention; PICK apps show `DurationPicker`
+  after it); send `ContinueTapped` (with `chosenMs` for PICK), `BlockClosed(GO_HOME | BACK |
+  SYSTEM_GESTURE)`, `BlockStarted/Stopped`, and launch the target app after Continue.
 
 ---
 
@@ -427,7 +450,7 @@ All in-app navigation happens via a single `NavHost` in `MainActivity`:
 | `Routes.SETUP` | `SetupScreen` | 4-step onboarding (welcome → permissions → app selection → done) |
 | `Routes.HOME` | `HomeScreen` | Dashboard with today's stats, restricted apps, nav cards |
 | `Routes.SETTINGS_FLOW` | (nested graph) | Settings flow: shared ViewModel, deferred save |
-| ↳ `Routes.SETTINGS` | `SettingsScreen` | Edit wait time, grace period, restricted apps list; Save button |
+| ↳ `Routes.SETTINGS` | `SettingsScreen` | Edit the default policy, confirmation wait, background, restricted apps and their own policies; Save button |
 | ↳ `Routes.SETTINGS_APP_SELECTION` | `AppSelectionScreen` | Searchable installed-app list (draft, same ViewModel as Settings) |
 | `Routes.APP_SELECTION` | `AppSelectionScreen` | Standalone app selection (e.g. from Setup); auto-saves on change |
 | `Routes.STATISTICS` | `StatisticsScreen` | Bar charts by time range (week/month/3mo/year) |
@@ -447,8 +470,10 @@ session engine for the **initial** block via Intent with `EXTRA_PACKAGE_NAME` an
 `ReInterventionActivity` is another **separate Activity** used for **re-intervention** (when the grace period
 expires while the user is still in the app; returning after grace expired shows the regular block). It has a distinct UI:
 animated fill background, large centered text with the app name in cyan ("still using &lt;app&gt;? this is your chance to stop"),
-"Go back home" button visible from the start, and "Keep using the app" button appearing when the wait ends. It reuses
-`AppBlockViewModel` for timer and event logic.
+"Go back home" button visible from the start, and "Keep using the app" button appearing when the wait ends. For a
+Pick your time app the text reads "time's up on &lt;app&gt;" while waiting; when the wait ends the text is replaced by the
+duration picker ("take another round?") plus "open for N min" (the picker takes no space while waiting). It reuses `AppBlockViewModel` for timer and event logic; the wait is the
+app's *time's-up* wait, independent of its opening wait.
 
 The **suggestion popup** is shown as an accessibility overlay via `SuggestionOverlayManager`
 (`TYPE_ACCESSIBILITY_OVERLAY`), so the intercepted app remains visible behind the overlay and
@@ -460,23 +485,23 @@ the popup can't be displaced by the target app's rapid activity/window changes.
 |-----------|-----------------|------------------|
 | `HomeViewModel` | `permissionsOk`, `showUsageAccessBanner`, `restrictedPackages`, `todayAttempts`, `todayEntered` | Check a11y/usage-access permissions, load today's aggregate stats |
 | `SetupViewModel` | `currentStep` (0–3), `accessibilityGranted`, `usageAccessGranted`, `restrictedPackages`, `canAdvance` | Drive 4-step onboarding, validate each step before advancing |
-| `SettingsViewModel` | `waitTimeSecondsInput`, `gracePeriodMinutesInput`, `restrictedAppsInfo`, `installedApps`, `appSearchQuery`, `hasChanges`, `showConfirmationScreen`, `confirmationProgress`, `confirmationPhase` | Draft-only state (when `draftOnly=true`); load/sort installed apps; persist only on Save; run confirmation timer when saving restriction-reducing changes |
-| `SettingsViewModel` (extended) | `expandedAppPackage`, `reInterventionDisabledPackages`, `blockBackground`, `customBackgroundFileName`, `backgroundImportFailed` | Track which restricted app card is expanded and which apps have re-intervention disabled. When `draftOnly=false` (e.g. Setup flow's app selection), restricted-app changes persist immediately. |
+| `SettingsViewModel` | `overrideDrafts` (`PolicyDraft` per app edited in this session; others show their saved policy), `confirmationWaitInput`, originals of each, `restrictedAppsInfo`, `installedApps`, `appSearchQuery`, `hasChanges`, `showConfirmationScreen`, `confirmationProgress`, `confirmationPhase` | Draft-only state (when `draftOnly=true`); policy editors address their app by `pkg`; Save stores only policies that differ from `AppPolicy.DEFAULT`; load/sort installed apps; persist only on Save; run confirmation timer when saving restriction-reducing changes |
+| `SettingsViewModel` (extended) | `expandedAppPackage`, `blockBackground`, `customBackgroundFileName`, `backgroundImportFailed` | Track which restricted app card is expanded. When `draftOnly=false` (e.g. Setup flow's app selection), restricted-app changes persist immediately (the restricted set only). |
 | `StatisticsViewModel` | `selectedRange`, `stats: List<AppStatistic>`, `isLoading`, `focusedSeries` | Aggregate daily stats into buckets, auto-refresh every 15 s, legend focus |
-| `AppBlockViewModel` | `phase` (WAITING/COMPLETED), `progress` (0→1), `openCount24h`, `blockBackground` (nullable until read) | Run wait countdown, expose the chosen background, emit one-shot events (`RequestFinish`, `RequestGoHome`) via Channel; report Continue / close / start / stop to the session engine under a per-block `instance` id |
+| `AppBlockViewModel` | `phase` (WAITING/COMPLETED), `progress` (0→1), `openCount24h`, `blockBackground` (nullable until read), `isPick`, `instant` (0-s wait), `pickMinutes`, `pickExtended` | Run the app's wait (opening, or time's up on a re-intervention), hold the picker state, expose the chosen background, emit one-shot events (`RequestFinish`, `RequestGoHome`) via Channel; report Continue (with the picked length) / close / start / stop to the session engine under a per-block `instance` id |
 
 All ViewModels expose state via `StateFlow` and screens collect it with
 `collectAsStateWithLifecycle`.
 
 ### 7.3 Settings UI Details
 
-- **Deferred save:** Settings are not written to DataStore until the user taps **Save**. A **Save** button in the top bar (left, after the back arrow) is disabled when there are no changes and enabled when any draft change exists (wait time, grace period, restricted apps, or re-intervention toggles).
-- **Restriction-reducing confirmation:** When the user taps Save, if the draft would *reduce* restrictions (grace period increased, wait time decreased, or any restricted app removed), a **settings confirmation screen** is shown instead of persisting immediately. It reuses the re-intervention visual style (black background, animated surface fill from bottom, centered message: "Take a breath before reducing your restrictions…"). The top button is **"back"** (dismiss confirmation, stay on settings); the bottom button **"save changes"** appears only after the current (persisted) wait-time countdown completes. **Back** cancels the confirmation; **save changes** persists and closes the confirmation. The rule is the pure function `isRestrictionReducing` (top of `SettingsViewModel.kt`, unit-tested); before applying it, Save re-reads the persisted values and merges restricted apps added meanwhile by the suggestion overlay into the draft. Empty/invalid wait or grace fields fall back to the saved value (not the app default) on focus loss. The screen sits inside `MainActivity`'s `safeDrawing` padding, so it extends itself back under the system bars (`extendIntoSystemBars`) and pads its own content by the raw insets.
-- **Waiting screen image:** a `BlockBackgroundPicker` row between the configuration fields and the restricted apps list offers the bundled images from `BlockBackgrounds`, the user's own photo when one is stored, and a tile that opens the system photo picker (`ActivityResultContracts.PickVisualMedia` — no permission needed). The picked photo is imported immediately but only *selected in the draft*; the DataStore key is written on Save. Changing the image alone is never restriction-reducing, so it does not trigger the confirmation wait. A failed import surfaces as a snackbar and leaves the draft untouched. Selection is highlighted with the same pending colour as the wait-time field while unsaved.
-- **Restricted apps** section on `SettingsScreen` shows each restricted app as an expandable `Card` with the app icon, label, and an always-visible delete icon in the header row.
+- **Deferred save:** Settings are not written to DataStore until the user taps **Save**. A **Save** button in the top bar (left, after the back arrow) is disabled when there are no changes and enabled when any draft change exists (an app's policy, confirmation wait, restricted apps, background). The whole screen is one `LazyColumn`: "Loosening your limits" (confirmation wait), Waiting screen image, Restricted apps. There is no defaults section: new apps silently get `AppPolicy.DEFAULT`.
+- **Restriction-reducing confirmation:** When the user taps Save, if the draft would *reduce* restrictions (any restricted app removed, the confirmation wait shortened, or the policy in effect for an already-restricted app loosened — see `isPolicyLooser`), a **settings confirmation screen** is shown instead of persisting immediately. It reuses the re-intervention visual style (black background, animated surface fill from bottom, centered message: "Take a breath before reducing your restrictions…"). The top button is **"back"** (dismiss confirmation, stay on settings); the bottom button **"save changes"** appears only after the persisted **confirmation wait** ("Loosening your limits" section, default 10 s) completes; a draft that shortens it does not apply to its own Save. **Back** cancels the confirmation; **save changes** persists and closes the confirmation. The rule is the pure function `isRestrictionReducing` (`PolicyDraft.kt`, unit-tested); before applying it, Save re-reads the persisted values and merges restricted apps added meanwhile by the suggestion overlay into the draft. Empty/invalid number fields fall back to the saved value (not the app default) on focus loss. The screen sits inside `MainActivity`'s `safeDrawing` padding, so it extends itself back under the system bars (`extendIntoSystemBars`) and pads its own content by the raw insets.
+- **Waiting screen image:** a `BlockBackgroundPicker` row between the confirmation-wait field and the restricted apps list offers the bundled images from `BlockBackgrounds`, the user's own photo when one is stored, and a tile that opens the system photo picker (`ActivityResultContracts.PickVisualMedia` — no permission needed). The picked photo is imported immediately but only *selected in the draft*; the DataStore key is written on Save. Changing the image alone is never restriction-reducing, so it does not trigger the confirmation wait. A failed import surfaces as a snackbar and leaves the draft untouched. Selection is highlighted with the same pending colour as the wait-time field while unsaved.
+- **Restricted apps** section on `SettingsScreen` shows each restricted app as an expandable `Card` with the app icon, label, a one-line policy summary (e.g. "Time limit · 12 s · 5 min") and an always-visible delete icon in the header row.
 - The entire card header is tappable and includes a chevron icon to indicate that it can expand for additional settings; only one app card is expanded at a time.
-- Expanding a card reveals a single toggle labeled **"Block again after grace"**, which controls whether re-intervention is enabled for that specific app (draft only until Save).
-- A horizontal divider between the header and expanded area uses the theme's `onSurface` color so it appears as a high-contrast white/black line depending on light or dark mode.
+- Expanding a card reveals the app's `PolicyEditor` (its saved policy, or the default) on a plain surface so it stays readable on a pending-tinted card (draft only until Save).
+- `PolicyEditor` ("When I open {app}"): three selectable mode rows, then only the selected mode's fields (`PolicyDraft.fields`): Pause only — wait when opening, free re-entry; Time limit — wait when opening, time allowed, wait when time's up, "+10 s" switch; Pick your time — wait when opening (0 allowed), wait before picking again, "+10 s" switch. Leaving Pick with a 0-s wait makes it 1 s.
 
 ### 7.4 Theme
 

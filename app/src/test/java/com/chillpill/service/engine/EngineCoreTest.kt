@@ -703,7 +703,7 @@ class EngineCoreTest {
     @Test fun configRemovesApp_dropsState() {
         val h = h()
         h.enterWithContinue(X)
-        h.send(Input.ConfigChanged(Config(setOf(Y, N), setOf(N), GRACE), h.now))
+        h.send(Input.ConfigChanged(Config.legacy(setOf(Y, N), setOf(N), GRACE), h.now))
         assertNull(h.state(X))
         h.clearEffects()
         h.home(); h.app(X)
@@ -734,7 +734,7 @@ class EngineCoreTest {
         h.app(S)
         assertTrue(h.blocksShown(S).isEmpty())
         // DataStore catches up; the pending override goes away, the session stays
-        h.send(Input.ConfigChanged(Config(setOf(X, Y, N, S), setOf(N), GRACE), h.now))
+        h.send(Input.ConfigChanged(Config.legacy(setOf(X, Y, N, S), setOf(N), GRACE), h.now))
         assertNotNull(h.session(S))
         h.advance(GRACE)
         assertEquals(BlockKind.RE_INTERVENTION, h.blocksShown(S).last().kind)

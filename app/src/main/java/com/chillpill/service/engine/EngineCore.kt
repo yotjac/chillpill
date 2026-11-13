@@ -54,7 +54,10 @@ class EngineCore {
     private val restricted: Set<String>
         get() = (config?.restricted ?: emptySet()) + pendingRestricted
 
-    private fun isNoReblock(pkg: String) = config?.noReblock?.contains(pkg) == true
+    /** Rule a new session of [pkg] starts with; apps still pending from the popup use the defaults. */
+    private fun ruleFor(pkg: String): AppRule? = config?.let { it.rules[pkg] ?: it.defaultRule }
+
+    private val Session.pauseOnly: Boolean get() = rule.mode == Mode.PAUSE_ONLY
 
     // ---------------------------------------------------------------------------------------
     // Input handling
@@ -230,7 +233,7 @@ class EngineCore {
                 if (!entry && state.leftAt == null) return
                 val leftAt = state.leftAt
                 val allowed = at < state.graceDeadline ||                                   // E6
-                    (isNoReblock(pkg) && (leftAt == null || at - leftAt < RETURN_WINDOW_MS)) // E7
+                    (state.pauseOnly && (leftAt == null || at - leftAt < RETURN_WINDOW_MS)) // E7
                 if (allowed) {
                     apps[pkg] = state.copy(leftAt = null)
                 } else {
@@ -288,9 +291,11 @@ class EngineCore {
 
     private fun onContinue(input: Input.ContinueTapped, out: MutableList<Effect>) { // A2 / A3
         if (apps[input.pkg] !is Blocking) return
-        val graceMs = config?.graceMs ?: return
+        val rule = ruleFor(input.pkg) ?: return
+        val graceMs = if (rule.mode == Mode.PICK) pickedMs(input.chosenMs) else rule.graceMs
         apps[input.pkg] = Session(
             graceDeadline = input.at + graceMs,
+            rule = rule,
             leftAt = if (presenceIs(input.pkg)) null else input.at
         )
         out += Effect.RecordUsage(input.pkg, UsageKind.WAIT_COMPLETED)
@@ -299,13 +304,20 @@ class EngineCore {
     private fun onExtend(input: Input.ExtendTapped, out: MutableList<Effect>) { // A5
         val state = apps[input.pkg] as? Session ?: return
         if (state.graceOver || input.at >= state.graceDeadline) return
-        if (state.extensionsUsed >= MAX_GRACE_EXTENSIONS) return
+        if (!state.rule.extensionAllowed || state.extensionsUsed >= MAX_GRACE_EXTENSIONS) return
         apps[input.pkg] = state.copy(
             graceDeadline = state.graceDeadline + GRACE_EXTENSION_MS,
             extensionsUsed = state.extensionsUsed + 1,
             extendedAt = input.at
         )
         out += Effect.RecordUsage(input.pkg, UsageKind.GRACE_EXTENDED)
+    }
+
+    /** A2: the visit length a PICK app gets for [chosenMs]: whole minutes, 1–90; 5 min if none. */
+    private fun pickedMs(chosenMs: Long?): Long {
+        if (chosenMs == null) return PICK_FALLBACK_MS
+        val minutes = (chosenMs + MINUTE_MS / 2) / MINUTE_MS
+        return (minutes * MINUTE_MS).coerceIn(PICK_MIN_MS, PICK_MAX_MS)
     }
 
     private fun onWarningDismissed(input: Input.WarningDismissed) { // A6
@@ -323,10 +335,13 @@ class EngineCore {
         if (suggestion?.pkg == input.pkg) suggestion = null
         out += Effect.PersistSuggestionAnswer(input.pkg, input.answer)
         if (input.answer != SuggestionAnswer.RESTRICT || input.pkg in restricted) return
-        val graceMs = config?.graceMs ?: return
+        val rule = config?.defaultRule ?: return
+        // A PICK default: the user never picked, so they get the fallback length.
+        val graceMs = if (rule.mode == Mode.PICK) PICK_FALLBACK_MS else rule.graceMs
         pendingRestricted += input.pkg
         apps[input.pkg] = Session(
             graceDeadline = input.at + graceMs,
+            rule = rule,
             leftAt = if (presenceIs(input.pkg)) null else input.at
         )
     }
@@ -335,7 +350,7 @@ class EngineCore {
 
     /** Processes every grace deadline at or before [t], earliest first. */
     private fun advanceTo(t: Long, out: MutableList<Effect>) {
-        // A no-re-block session past its grace, left 10 s ago or more, can only end in a block on
+        // A PAUSE_ONLY session past its grace, left 10 s ago or more, can only end in a block on
         // the next entry: end it now so nothing (reconciliation probes) keeps running for it.
         apps.entries.removeAll { (_, s) ->
             s is Session && s.graceOver && s.leftAt != null && t - s.leftAt >= RETURN_WINDOW_MS
@@ -355,7 +370,7 @@ class EngineCore {
     }
 
     private fun expire(pkg: String, state: Session, out: MutableList<Effect>) {
-        if (state.leftAt != null && isNoReblock(pkg) && state.graceDeadline - state.leftAt >= RETURN_WINDOW_MS) {
+        if (state.leftAt != null && state.pauseOnly && state.graceDeadline - state.leftAt >= RETURN_WINDOW_MS) {
             // Away for 10 s or more when grace ran out: this session is already over.
             apps.remove(pkg)
             out += Effect.RecordUsage(pkg, UsageKind.GRACE_EXPIRED_WHILE_AWAY)
@@ -363,7 +378,7 @@ class EngineCore {
         }
         val present = presenceIs(pkg)
         when {
-            isNoReblock(pkg) -> { // G1
+            state.pauseOnly -> { // G1
                 apps[pkg] = state.copy(graceOver = true)
                 out += Effect.RecordUsage(
                     pkg,
@@ -437,9 +452,9 @@ class EngineCore {
     /** The grace-expiry pill for the app in front, if any (B1). */
     fun warning(now: Long): WarningUi? {
         val pkg = presence.pkg ?: return null
-        if (!presenceIs(pkg) || isNoReblock(pkg)) return null
+        if (!presenceIs(pkg)) return null
         val state = apps[pkg] as? Session ?: return null
-        if (state.graceOver) return null
+        if (state.pauseOnly || state.graceOver) return null
         val remaining = state.graceDeadline - now
         if (remaining <= 0L) return null
         val extendedAt = state.extendedAt
@@ -450,7 +465,7 @@ class EngineCore {
         val firstAvailable = state.extensionsUsed < MAX_GRACE_EXTENSIONS && !state.firstWarningDismissed
         return when {
             firstAvailable && remaining <= WARNING_LEAD_MS ->
-                WarningUi(pkg, state.graceDeadline, canExtend = true, dismissible = true)
+                WarningUi(pkg, state.graceDeadline, canExtend = state.rule.extensionAllowed, dismissible = true)
             remaining <= FINAL_WARNING_LEAD_MS ->
                 WarningUi(pkg, state.graceDeadline, canExtend = false, dismissible = false)
             else -> null
@@ -505,7 +520,7 @@ class EngineCore {
     }
 
     companion object {
-        /** No-re-block apps: leaving for less than this never re-triggers the block screen. */
+        /** PAUSE_ONLY apps: leaving for less than this never re-triggers the block screen. */
         const val RETURN_WINDOW_MS = 10_000L
         /** The first warning (with "+10 s") appears this long before the deadline. */
         const val WARNING_LEAD_MS = 10_000L
@@ -532,5 +547,12 @@ class EngineCore {
         const val BURST_PROBES = 4
         const val BURST_SPACING_MS = 400L
         val FOLLOW_UP_PROBE_DELAYS_MS = longArrayOf(300L, 1_000L)
+
+        private const val MINUTE_MS = 60_000L
+        /** PICK: range of a visit the user can choose (whole minutes). */
+        const val PICK_MIN_MS = 1L * MINUTE_MS
+        const val PICK_MAX_MS = 90L * MINUTE_MS
+        /** PICK: length when nothing was picked (Continue without a choice, suggestion "Restrict"). */
+        const val PICK_FALLBACK_MS = 5L * MINUTE_MS
     }
 }

@@ -9,7 +9,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.chillpill.ChillpillApp
+import com.chillpill.data.restricted.AppPolicy
+import com.chillpill.data.restricted.PolicyResolver
 import com.chillpill.data.settings.BlockBackground
+import com.chillpill.service.engine.Mode
 import com.chillpill.ui.appblock.AppBlockPhase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,7 +21,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -27,63 +29,43 @@ import kotlinx.coroutines.withContext
 
 data class AppInfo(
     val packageName: String,
-    val label: String,
-    val reInterventionEnabled: Boolean = true
+    val label: String
 )
 
-private const val DEFAULT_WAIT_SECONDS = 12
-private const val DEFAULT_GRACE_MINUTES = 5
-private const val MIN_WAIT_SECONDS = 1
-private const val MAX_WAIT_SECONDS = 7200  // 2 hours
-private const val MIN_GRACE_MINUTES = 1
-private const val MAX_GRACE_MINUTES = 1440  // 24 hours
 private const val CONFIRMATION_TICK_MS = 100L
 
 /**
- * True only if saving would lower the user's standards: wait time decreased, grace period
- * increased, or at least one restricted app removed. Every other edit (stricter values, added
- * apps, background, "block again" toggles) saves without the confirmation wait.
+ * Settings draft (specs/per-app-modes.md): each restricted app's policy (apps not in
+ * [overrideDrafts] have the fixed [AppPolicy.DEFAULT]; editing one adds it), the confirmation wait,
+ * the restricted set and the background. Nothing is persisted until Save; a looser draft goes
+ * through the confirmation wait.
  */
-internal fun isRestrictionReducing(
-    originalWaitSeconds: Int,
-    draftWaitSeconds: Int,
-    originalGraceMinutes: Int,
-    draftGraceMinutes: Int,
-    originalRestricted: Set<String>,
-    draftRestricted: Set<String>
-): Boolean =
-    draftWaitSeconds < originalWaitSeconds ||
-        draftGraceMinutes > originalGraceMinutes ||
-        !draftRestricted.containsAll(originalRestricted)
-
 class SettingsViewModel(
     private val app: ChillpillApp,
     private val draftOnly: Boolean = true
 ) : ViewModel() {
 
-    // Original (persisted) state - loaded once on init
-    private val _originalWaitTimeSeconds = MutableStateFlow(DEFAULT_WAIT_SECONDS)
-    val originalWaitTimeSeconds: StateFlow<Int> = _originalWaitTimeSeconds.asStateFlow()
+    // ---- persisted values (loaded in init, refreshed before Save) -----------------------------
 
-    private val _originalGracePeriodMinutes = MutableStateFlow(DEFAULT_GRACE_MINUTES)
-    val originalGracePeriodMinutes: StateFlow<Int> = _originalGracePeriodMinutes.asStateFlow()
+    private val _originalOverrides = MutableStateFlow<Map<String, AppPolicy>>(emptyMap())
+    val originalOverrides: StateFlow<Map<String, AppPolicy>> = _originalOverrides.asStateFlow()
+
+    private val _originalConfirmationWait = MutableStateFlow(10)
+    val originalConfirmationWait: StateFlow<Int> = _originalConfirmationWait.asStateFlow()
 
     private val _originalRestrictedPackages = MutableStateFlow<Set<String>>(emptySet())
     val originalRestrictedPackages: StateFlow<Set<String>> = _originalRestrictedPackages.asStateFlow()
 
-    private val _originalReInterventionDisabledPackages = MutableStateFlow<Set<String>>(emptySet())
-    val originalReInterventionDisabledPackages: StateFlow<Set<String>> =
-        _originalReInterventionDisabledPackages.asStateFlow()
-
-    // Draft state (user edits, not persisted until Save)
-    private val _waitTimeSecondsInput = MutableStateFlow("")
-    val waitTimeSecondsInput: StateFlow<String> = _waitTimeSecondsInput.asStateFlow()
-
-    private val _gracePeriodMinutesInput = MutableStateFlow("")
-    val gracePeriodMinutesInput: StateFlow<String> = _gracePeriodMinutesInput.asStateFlow()
-
     private val _originalBlockBackground = MutableStateFlow<BlockBackground>(BlockBackground.Default)
     val originalBlockBackground: StateFlow<BlockBackground> = _originalBlockBackground.asStateFlow()
+
+    // ---- draft --------------------------------------------------------------------------------
+
+    private val _overrideDrafts = MutableStateFlow<Map<String, PolicyDraft>>(emptyMap())
+    val overrideDrafts: StateFlow<Map<String, PolicyDraft>> = _overrideDrafts.asStateFlow()
+
+    private val _confirmationWaitInput = MutableStateFlow("")
+    val confirmationWaitInput: StateFlow<String> = _confirmationWaitInput.asStateFlow()
 
     private val _blockBackground = MutableStateFlow<BlockBackground>(BlockBackground.Default)
     val blockBackground: StateFlow<BlockBackground> = _blockBackground.asStateFlow()
@@ -107,63 +89,40 @@ class SettingsViewModel(
     private val _restrictedAppsInfo = MutableStateFlow<List<AppInfo>>(emptyList())
     val restrictedAppsInfo: StateFlow<List<AppInfo>> = _restrictedAppsInfo.asStateFlow()
 
-    private val _reInterventionDisabledPackages = MutableStateFlow<Set<String>>(emptySet())
-    val reInterventionDisabledPackages: StateFlow<Set<String>> = _reInterventionDisabledPackages.asStateFlow()
-
     private val _expandedAppPackage = MutableStateFlow<String?>(null)
     val expandedAppPackage: StateFlow<String?> = _expandedAppPackage.asStateFlow()
 
     private val _appSearchQuery = MutableStateFlow("")
     val appSearchQuery: StateFlow<String> = _appSearchQuery.asStateFlow()
 
-    private data class DraftInputs(
-        val waitTimeInput: String,
-        val gracePeriodInput: String,
-        val restrictedPackages: Set<String>,
-        val reInterventionDisabledPackages: Set<String>,
-        val blockBackground: BlockBackground
+    /** Everything Save would write, as it would be written. */
+    private data class Values(
+        val overrides: Map<String, AppPolicy>,
+        val confirmationWait: Int,
+        val restricted: Set<String>,
+        val background: BlockBackground
     )
 
-    private data class OriginalValues(
-        val waitTimeSeconds: Int,
-        val gracePeriodMinutes: Int,
-        val restrictedPackages: Set<String>,
-        val reInterventionDisabledPackages: Set<String>,
-        val blockBackground: BlockBackground
+    private fun draftValues() = Values(
+        overrides = draftOverrides(),
+        confirmationWait = draftConfirmationWait(),
+        restricted = _restrictedPackages.value,
+        background = _blockBackground.value
     )
 
-    private val draftInputs: Flow<DraftInputs> = combine(
-        _waitTimeSecondsInput,
-        _gracePeriodMinutesInput,
-        _restrictedPackages,
-        _reInterventionDisabledPackages,
-        _blockBackground
-    ) { waitInput, graceInput, restricted, reInterventionDisabled, background ->
-        DraftInputs(waitInput, graceInput, restricted, reInterventionDisabled, background)
-    }
+    private fun originalValues() = Values(
+        overrides = _originalOverrides.value,
+        confirmationWait = _originalConfirmationWait.value,
+        restricted = _originalRestrictedPackages.value,
+        background = _originalBlockBackground.value
+    )
 
-    private val originalValues: Flow<OriginalValues> = combine(
-        _originalWaitTimeSeconds,
-        _originalGracePeriodMinutes,
-        _originalRestrictedPackages,
-        _originalReInterventionDisabledPackages,
-        _originalBlockBackground
-    ) { wait, grace, restricted, reInterventionDisabled, background ->
-        OriginalValues(wait, grace, restricted, reInterventionDisabled, background)
-    }
-
-    val hasChanges: StateFlow<Boolean> = combine(draftInputs, originalValues) { draft, original ->
-        // An empty or invalid field is treated as "unchanged" rather than as an edit.
-        val waitDraft = draft.waitTimeInput.toIntOrNull()
-            ?.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS) ?: original.waitTimeSeconds
-        val graceDraft = draft.gracePeriodInput.toIntOrNull()
-            ?.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES) ?: original.gracePeriodMinutes
-        waitDraft != original.waitTimeSeconds ||
-            graceDraft != original.gracePeriodMinutes ||
-            draft.restrictedPackages != original.restrictedPackages ||
-            draft.reInterventionDisabledPackages != original.reInterventionDisabledPackages ||
-            draft.blockBackground != original.blockBackground
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    // An empty or invalid field counts as "unchanged" (it falls back to the saved value).
+    val hasChanges: StateFlow<Boolean> = combine(
+        combine(_overrideDrafts, _confirmationWaitInput, _restrictedPackages, _blockBackground) { _, _, _, _ -> Unit },
+        combine(_originalOverrides, _originalConfirmationWait, _originalRestrictedPackages, _originalBlockBackground) { _, _, _, _ -> Unit }
+    ) { _, _ -> draftValues() != originalValues() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     // Confirmation screen state (when saving would reduce restrictions)
     private val _showConfirmationScreen = MutableStateFlow(false)
@@ -180,10 +139,8 @@ class SettingsViewModel(
     init {
         viewModelScope.launch {
             val settings = app.settingsRepository.settings.first()
-            _originalWaitTimeSeconds.value = settings.waitTimeSeconds
-            _originalGracePeriodMinutes.value = settings.gracePeriodMinutes
-            _waitTimeSecondsInput.value = settings.waitTimeSeconds.toString()
-            _gracePeriodMinutesInput.value = settings.gracePeriodMinutes.toString()
+            _originalConfirmationWait.value = settings.confirmationWaitSeconds
+            _confirmationWaitInput.value = settings.confirmationWaitSeconds.toString()
             _originalBlockBackground.value = settings.blockBackground
             _blockBackground.value = settings.blockBackground
             val persistedCustom = (settings.blockBackground as? BlockBackground.Custom)?.fileName
@@ -197,12 +154,11 @@ class SettingsViewModel(
             }
         }
         viewModelScope.launch {
-            val restricted = app.restrictedAppsRepository.restrictedPackages.first()
-            val reInterventionDisabled = app.restrictedAppsRepository.reInterventionDisabledPackages.first()
-            _originalRestrictedPackages.value = restricted
-            _originalReInterventionDisabledPackages.value = reInterventionDisabled
-            _restrictedPackages.value = restricted
-            _reInterventionDisabledPackages.value = reInterventionDisabled
+            val restrictions = app.restrictions.first()
+            _originalRestrictedPackages.value = restrictions.restricted
+            _restrictedPackages.value = restrictions.restricted
+            _originalOverrides.value = restrictions.overrides
+            _overrideDrafts.value = restrictions.overrides.mapValues { PolicyDraft.of(it.value) }
             loadRestrictedAppsInfo()
             loadInstalledApps()
         }
@@ -211,18 +167,12 @@ class SettingsViewModel(
     private fun loadRestrictedAppsInfo() {
         viewModelScope.launch {
             val packages = _restrictedPackages.value
-            val disabledPackages = _reInterventionDisabledPackages.value
             val list = withContext(Dispatchers.IO) {
                 val pm = app.packageManager
                 packages.mapNotNull { packageName ->
                     try {
                         val applicationInfo = pm.getApplicationInfo(packageName, 0)
-                        val label = pm.getApplicationLabel(applicationInfo).toString()
-                        AppInfo(
-                            packageName = packageName,
-                            label = label,
-                            reInterventionEnabled = packageName !in disabledPackages
-                        )
+                        AppInfo(packageName, pm.getApplicationLabel(applicationInfo).toString())
                     } catch (_: PackageManager.NameNotFoundException) {
                         null
                     }
@@ -292,22 +242,6 @@ class SettingsViewModel(
         )
     }
 
-    fun onWaitTimeChanged(s: String) {
-        val digitsOnly = s.filter { it.isDigit() }
-        _waitTimeSecondsInput.value = digitsOnly
-        val n = digitsOnly.toIntOrNull() ?: return
-        val clamped = n.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS)
-        if (clamped != n) _waitTimeSecondsInput.value = clamped.toString()
-    }
-
-    fun onGracePeriodChanged(s: String) {
-        val digitsOnly = s.filter { it.isDigit() }
-        _gracePeriodMinutesInput.value = digitsOnly
-        val n = digitsOnly.toIntOrNull() ?: return
-        val clamped = n.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES)
-        if (clamped != n) _gracePeriodMinutesInput.value = clamped.toString()
-    }
-
     fun onBuiltInBackgroundSelected(id: String) {
         _blockBackground.value = BlockBackground.BuiltIn(id)
     }
@@ -343,21 +277,20 @@ class SettingsViewModel(
         _backgroundImportFailed.value = false
     }
 
+    // ---- restricted apps ----------------------------------------------------------------------
+
     fun onRestrictedChanged(packageName: String, selected: Boolean) {
         _restrictedPackages.value = if (selected) {
             _restrictedPackages.value + packageName
         } else {
             _restrictedPackages.value - packageName
-        }.also { updated ->
-            if (packageName !in updated) {
-                _reInterventionDisabledPackages.value =
-                    _reInterventionDisabledPackages.value - packageName
-            }
         }
+        if (!selected) _overrideDrafts.value = _overrideDrafts.value - packageName
         if (!draftOnly) {
+            // App selection outside Settings (setup): the restricted set only; overrides of
+            // removed apps are ignored when read, new apps get the default policy.
             viewModelScope.launch {
                 app.restrictedAppsRepository.setRestricted(_restrictedPackages.value)
-                app.restrictedAppsRepository.setReInterventionDisabled(_reInterventionDisabledPackages.value)
             }
         }
         loadRestrictedAppsInfo()
@@ -366,18 +299,9 @@ class SettingsViewModel(
 
     fun removeRestrictedApp(packageName: String) {
         _restrictedPackages.value = _restrictedPackages.value - packageName
-        _reInterventionDisabledPackages.value = _reInterventionDisabledPackages.value - packageName
+        _overrideDrafts.value = _overrideDrafts.value - packageName
         loadRestrictedAppsInfo()
         loadInstalledApps()
-    }
-
-    fun onReInterventionToggled(packageName: String, enabled: Boolean) {
-        _reInterventionDisabledPackages.value = if (enabled) {
-            _reInterventionDisabledPackages.value - packageName
-        } else {
-            _reInterventionDisabledPackages.value + packageName
-        }
-        loadRestrictedAppsInfo()
     }
 
     fun onToggleExpanded(packageName: String) {
@@ -392,46 +316,62 @@ class SettingsViewModel(
         _appSearchQuery.value = query
     }
 
-    /** Call when focus leaves a config field to validate/reset invalid values (draft only, no persist). */
-    fun onWaitTimeFocusLost() {
-        // An empty/invalid field goes back to the saved value, not the app default: resetting
-        // to the default could itself look like lowering (or raising) the standards.
-        val s = _waitTimeSecondsInput.value
-        if (s.isEmpty()) {
-            _waitTimeSecondsInput.value = _originalWaitTimeSeconds.value.toString()
-        } else {
-            val n = s.toIntOrNull()
-            if (n == null || n < MIN_WAIT_SECONDS) {
-                _waitTimeSecondsInput.value = _originalWaitTimeSeconds.value.toString()
-            } else if (n > MAX_WAIT_SECONDS) {
-                _waitTimeSecondsInput.value = MAX_WAIT_SECONDS.toString()
-            }
-        }
+    // ---- policy editors (one per restricted app) -----------------------------------------------
+
+    /** Saved policy of [pkg] (what "pending" is measured against). */
+    fun originalFor(pkg: String): AppPolicy = _originalOverrides.value[pkg] ?: AppPolicy.DEFAULT
+
+    /** The first edit of an app without its own draft starts from its saved policy. */
+    private fun updateDraft(pkg: String, change: (PolicyDraft) -> PolicyDraft) {
+        val current = _overrideDrafts.value[pkg] ?: PolicyDraft.of(originalFor(pkg))
+        _overrideDrafts.value = _overrideDrafts.value + (pkg to change(current))
     }
 
-    fun onGracePeriodFocusLost() {
-        val s = _gracePeriodMinutesInput.value
-        if (s.isEmpty()) {
-            _gracePeriodMinutesInput.value = _originalGracePeriodMinutes.value.toString()
-        } else {
-            val n = s.toIntOrNull()
-            if (n == null || n < MIN_GRACE_MINUTES) {
-                _gracePeriodMinutesInput.value = _originalGracePeriodMinutes.value.toString()
-            } else if (n > MAX_GRACE_MINUTES) {
-                _gracePeriodMinutesInput.value = MAX_GRACE_MINUTES.toString()
-            }
-        }
+    fun onPolicyModeChanged(pkg: String, mode: Mode) = updateDraft(pkg) { it.withMode(mode) }
+
+    fun onPolicyExtensionToggled(pkg: String, allowed: Boolean) =
+        updateDraft(pkg) { it.copy(extensionAllowed = allowed) }
+
+    /** Digits only; above the maximum snaps to the maximum (below the minimum waits for focus loss). */
+    fun onPolicyFieldChanged(pkg: String, field: PolicyField, text: String) = updateDraft(pkg) { draft ->
+        val digits = text.filter { it.isDigit() }.take(6)
+        val max = PolicyDraft.range(field, draft.mode).last
+        val n = digits.toIntOrNull()
+        draft.withText(field, if (n != null && n > max) max.toString() else digits)
     }
 
-    private fun getDraftWaitTimeSeconds(): Int {
-        return _waitTimeSecondsInput.value.toIntOrNull()
-            ?.coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS) ?: _originalWaitTimeSeconds.value
+    /**
+     * An empty or too-small field goes back to the saved value, not an app default: resetting to
+     * a default could itself look like lowering (or raising) the standards.
+     */
+    fun onPolicyFieldFocusLost(pkg: String, field: PolicyField) = updateDraft(pkg) { draft ->
+        if (draft.isValid(field)) draft
+        else draft.withText(field, PolicyDraft.valueOf(originalFor(pkg), field).coerceIn(PolicyDraft.range(field, draft.mode)).toString())
     }
 
-    private fun getDraftGracePeriodMinutes(): Int {
-        return _gracePeriodMinutesInput.value.toIntOrNull()
-            ?.coerceIn(MIN_GRACE_MINUTES, MAX_GRACE_MINUTES) ?: _originalGracePeriodMinutes.value
+    fun onConfirmationWaitChanged(text: String) {
+        val digits = text.filter { it.isDigit() }.take(6)
+        val n = digits.toIntOrNull()
+        _confirmationWaitInput.value =
+            if (n != null && n > AppPolicy.MAX_WAIT_SECONDS) AppPolicy.MAX_WAIT_SECONDS.toString() else digits
     }
+
+    fun onConfirmationWaitFocusLost() {
+        val n = _confirmationWaitInput.value.toIntOrNull()
+        if (n == null || n < 1) _confirmationWaitInput.value = _originalConfirmationWait.value.toString()
+    }
+
+    /** Policies that differ from the default, of restricted apps only (as Save stores them). */
+    private fun draftOverrides(): Map<String, AppPolicy> = PolicyResolver.normalized(
+        _overrideDrafts.value.mapValues { (pkg, d) -> d.toPolicy(originalFor(pkg)) },
+        _restrictedPackages.value
+    )
+
+    private fun draftConfirmationWait(): Int =
+        _confirmationWaitInput.value.toIntOrNull()?.takeIf { it in 1..AppPolicy.MAX_WAIT_SECONDS }
+            ?: _originalConfirmationWait.value
+
+    // ---- save ---------------------------------------------------------------------------------
 
     /**
      * Re-reads what is actually persisted before judging the draft. The originals are loaded once
@@ -440,11 +380,11 @@ class SettingsViewModel(
      */
     private suspend fun refreshOriginals() {
         val settings = app.settingsRepository.settings.first()
-        val restricted = app.restrictedAppsRepository.restrictedPackages.first()
-        val addedElsewhere = restricted - _originalRestrictedPackages.value
-        _originalWaitTimeSeconds.value = settings.waitTimeSeconds
-        _originalGracePeriodMinutes.value = settings.gracePeriodMinutes
-        _originalRestrictedPackages.value = restricted
+        val restrictions = app.restrictions.first()
+        val addedElsewhere = restrictions.restricted - _originalRestrictedPackages.value
+        _originalConfirmationWait.value = settings.confirmationWaitSeconds
+        _originalRestrictedPackages.value = restrictions.restricted
+        _originalOverrides.value = restrictions.overrides
         if (addedElsewhere.isNotEmpty()) {
             _restrictedPackages.value = _restrictedPackages.value + addedElsewhere
             loadRestrictedAppsInfo()
@@ -454,13 +394,15 @@ class SettingsViewModel(
     fun onSaveClicked() {
         viewModelScope.launch {
             refreshOriginals()
+            val draft = draftValues()
+            val original = originalValues()
             val reducing = isRestrictionReducing(
-                originalWaitSeconds = _originalWaitTimeSeconds.value,
-                draftWaitSeconds = getDraftWaitTimeSeconds(),
-                originalGraceMinutes = _originalGracePeriodMinutes.value,
-                draftGraceMinutes = getDraftGracePeriodMinutes(),
-                originalRestricted = _originalRestrictedPackages.value,
-                draftRestricted = _restrictedPackages.value
+                originalRestricted = original.restricted,
+                draftRestricted = draft.restricted,
+                originalOverrides = original.overrides,
+                draftOverrides = draft.overrides,
+                originalConfirmationWaitSeconds = original.confirmationWait,
+                draftConfirmationWaitSeconds = draft.confirmationWait
             )
             if (reducing) startConfirmation() else saveChanges()
         }
@@ -472,7 +414,8 @@ class SettingsViewModel(
         _confirmationPhase.value = AppBlockPhase.WAITING
         confirmationTimerJob?.cancel()
         confirmationTimerJob = viewModelScope.launch {
-            val waitTimeSeconds = _originalWaitTimeSeconds.value.coerceAtLeast(1)
+            // The persisted wait: a draft that shortens it does not apply to its own Save.
+            val waitTimeSeconds = _originalConfirmationWait.value.coerceAtLeast(1)
             val totalMs = waitTimeSeconds * 1000L
             var elapsedMs = 0L
             while (elapsedMs < totalMs) {
@@ -503,28 +446,24 @@ class SettingsViewModel(
 
     private fun saveChanges() {
         viewModelScope.launch {
-            val waitSeconds = getDraftWaitTimeSeconds()
-            val graceMinutes = getDraftGracePeriodMinutes()
-            val restricted = _restrictedPackages.value
-            val reInterventionDisabled = _reInterventionDisabledPackages.value
-            val background = _blockBackground.value
+            val v = draftValues()
             withContext(Dispatchers.IO) {
-                app.settingsRepository.setWaitTimeSeconds(waitSeconds)
-                app.settingsRepository.setGracePeriodMinutes(graceMinutes)
-                app.settingsRepository.setBlockBackground(background)
-                app.restrictedAppsRepository.setRestricted(restricted)
-                app.restrictedAppsRepository.setReInterventionDisabled(reInterventionDisabled)
+                val settings = app.settingsRepository.settings.first()
+                app.settingsRepository.setSettings(settings.copy(confirmationWaitSeconds = v.confirmationWait, blockBackground = v.background))
+                app.restrictedAppsRepository.setRestrictedWithOverrides(v.restricted, v.overrides)
             }
             // Keep the photo still offered in the picker plus whatever was just persisted (the
             // user may have removed the photo while the save was in flight); drop the rest.
             app.blockBackgroundStore.cleanup(
-                setOfNotNull(_customBackgroundFileName.value, (background as? BlockBackground.Custom)?.fileName)
+                setOfNotNull(_customBackgroundFileName.value, (v.background as? BlockBackground.Custom)?.fileName)
             )
-            _originalWaitTimeSeconds.value = waitSeconds
-            _originalGracePeriodMinutes.value = graceMinutes
-            _originalRestrictedPackages.value = restricted
-            _originalReInterventionDisabledPackages.value = reInterventionDisabled
-            _originalBlockBackground.value = background
+            _originalOverrides.value = v.overrides
+            _originalConfirmationWait.value = v.confirmationWait
+            _originalRestrictedPackages.value = v.restricted
+            _originalBlockBackground.value = v.background
+            // Show what was stored (invalid fields have fallen back, waits were sanitized).
+            _overrideDrafts.value = v.overrides.mapValues { PolicyDraft.of(it.value) }
+            _confirmationWaitInput.value = v.confirmationWait.toString()
             _showConfirmationScreen.value = false
             _confirmationProgress.value = 0f
             _confirmationPhase.value = AppBlockPhase.WAITING

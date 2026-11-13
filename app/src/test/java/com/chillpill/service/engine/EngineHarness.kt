@@ -18,7 +18,9 @@ const val GRACE = 60_000L
 class EngineHarness(
     restricted: Set<String> = setOf(X, Y, N),
     noReblock: Set<String> = setOf(N),
-    graceMs: Long = GRACE
+    graceMs: Long = GRACE,
+    /** Full per-app config; overrides the three legacy parameters when given. */
+    config: Config? = null
 ) {
     val core = EngineCore()
     var now = 1_000_000L
@@ -36,7 +38,7 @@ class EngineHarness(
     val instances = HashMap<String, Long>()
 
     init {
-        send(Input.ConfigChanged(Config(restricted, noReblock, graceMs), now))
+        send(Input.ConfigChanged(config ?: Config.legacy(restricted, noReblock, graceMs), now))
     }
 
     fun send(input: Input): List<Effect> {
@@ -117,16 +119,16 @@ class EngineHarness(
     fun blockClosed(pkg: String, reason: CloseReason, instance: Long = instances.getValue(pkg)) =
         send(Input.BlockClosed(pkg, reason, instance, now))
 
-    fun tapContinue(pkg: String) = send(Input.ContinueTapped(pkg, now))
+    fun tapContinue(pkg: String, chosenMs: Long? = null) = send(Input.ContinueTapped(pkg, now, chosenMs))
     fun extend(pkg: String) = send(Input.ExtendTapped(pkg, now))
     fun dismissWarning(pkg: String) = send(Input.WarningDismissed(pkg, now))
 
     /** Open [pkg], get blocked, wait, Continue, land back in the app. */
-    fun enterWithContinue(pkg: String) {
+    fun enterWithContinue(pkg: String, chosenMs: Long? = null) {
         app(pkg)
         blockAppears(pkg)
         advance(1_000)
-        tapContinue(pkg)
+        tapContinue(pkg, chosenMs)
         blockStops(pkg)
         app(pkg)
         blockClosed(pkg, CloseReason.SYSTEM_GESTURE) // onUserLeaveHint after Continue: ignored

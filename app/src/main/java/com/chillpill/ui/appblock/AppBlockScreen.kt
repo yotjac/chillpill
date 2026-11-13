@@ -23,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +35,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -146,18 +150,20 @@ private fun decodeDrawable(context: Context, resId: Int): BitmapPainter? = try {
 fun AppBlockScreen(
     phase: AppBlockPhase,
     progress: Float,
-    openCount24h: Int,
+    /** Null until read: the attempts text is left out rather than flashing a wrong number. */
+    openCount24h: Int?,
     isReIntervention: Boolean,
     appName: String,
     background: BlockBackground?,
     onContinue: () -> Unit,
     onGoHome: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    pick: PickState? = null
 ) {
     val backgroundPainter = rememberBlockBackgroundPainter(background)
     val animatedProgress: Float by animateFloatAsState(
         targetValue = progress,
-        animationSpec = tween(durationMillis = 1000, easing = LinearEasing),
+        animationSpec = if (pick?.instant == true) snap() else tween(durationMillis = 1000, easing = LinearEasing),
         label = "overlayProgress"
     )
     Box(modifier = modifier.fillMaxSize()) {
@@ -233,22 +239,32 @@ fun AppBlockScreen(
             )
         }
 
-        if (showCompleted) {
-            // Completed phase: stats centered, buttons at the bottom
+        // One layout for the whole screen, so nothing moves when the wait ends. It is clipped to
+        // the fill: the attempts text is revealed by the rising overlay, line by line. The buttons
+        // are laid out from the start but stay invisible and disabled until the wait is over
+        // (the fill then covers everything, so the clip no longer hides anything).
+        // A PICK app drops the attempts text once its picker shows, to keep the screen calm.
+        val showStats = openCount24h != null && !(showCompleted && pick != null)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithContent {
+                    clipRect(top = size.height * (1f - animatedProgress)) {
+                        this@drawWithContent.drawContent()
+                    }
+                }
+                .padding(horizontal = 24.dp, vertical = 48.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 24.dp, vertical = 48.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
+                if (showStats && openCount24h != null) {
                     Text(
                         text = openCount24h.toString(),
                         style = MaterialTheme.typography.displayLarge.copy(fontWeight = FontWeight.ExtraBold),
@@ -263,42 +279,58 @@ fun AppBlockScreen(
                         textAlign = TextAlign.Center
                     )
                 }
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Button(
-                        onClick = onGoHome,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        shape = MaterialTheme.shapes.large
-                    ) {
-                        Text(
-                            text = stringResource(R.string.block_home),
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedButton(
-                        onClick = onContinue,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        shape = MaterialTheme.shapes.medium,
-                        border = null
-                    ) {
-                        Text(
-                            text = stringResource(R.string.block_continue_to_app),
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                    }
+                if (pick != null && showCompleted) {
+                    // Centred in the space the attempts text had.
+                    DurationPicker(
+                        title = stringResource(R.string.pick_title),
+                        minutes = pick.minutes,
+                        extended = pick.extended,
+                        onMinutesChange = pick.onMinutesChange,
+                        onToggleRange = pick.onToggleRange
+                    )
                 }
             }
-        } else {
-            // Waiting phase: overlay animation only; no additional content
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Spacer(modifier = Modifier.height(24.dp))
+                Button(
+                    onClick = onGoHome,
+                    enabled = showCompleted,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .alpha(if (showCompleted) 1f else 0f),
+                    shape = MaterialTheme.shapes.large
+                ) {
+                    Text(
+                        text = stringResource(R.string.block_home),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = onContinue,
+                    enabled = showCompleted,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .alpha(if (showCompleted) 1f else 0f),
+                    shape = MaterialTheme.shapes.medium,
+                    border = null
+                ) {
+                    Text(
+                        text = if (pick != null) {
+                            stringResource(R.string.pick_open_for, pick.minutes)
+                        } else {
+                            stringResource(R.string.block_continue_to_app)
+                        },
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+            }
         }
     }
 }
