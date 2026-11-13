@@ -210,8 +210,16 @@ class SessionEngine(private val app: ChillpillApp) {
             }
             is Effect.RequestProbe -> io.launch {
                 val result = try {
+                    // Taken before the query: what it reports is true as of this moment (P6b).
+                    val queriedAt = now()
                     ForegroundPackageQuery.query(app)?.let {
-                        ProbeResult(it.packageName, classifier.classify(it.packageName, null), wallToElapsed(it.resumedAtWallMs))
+                        ProbeResult(
+                            pkg = it.packageName,
+                            kind = classifier.classify(it.packageName, null),
+                            resumedAt = wallToElapsed(it.resumedAtWallMs),
+                            queriedAt = queriedAt,
+                            onlyResumed = it.onlyResumed
+                        )
                     }
                 } catch (t: Throwable) {
                     Log.e(TAG, "foreground probe failed", t)

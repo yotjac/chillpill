@@ -60,7 +60,7 @@ Gradle wrapper is checked in. On Windows use `gradlew.bat` instead of `./gradlew
 ./gradlew assembleDebug          # build
 ./gradlew installDebug           # install on the connected device/emulator
 ./gradlew lintDebug              # Android lint
-./gradlew testDebugUnitTest      # unit tests (app/src/test: engine scenarios + fuzz, classifier, trace replay, settings)
+./gradlew testDebugUnitTest      # unit tests (app/src/test: engine scenarios + fuzz, classifier, foreground resolver, trace replay, settings)
 ```
 
 Release signing reads `keystore.properties` from the repo root (never committed). If it is
@@ -99,6 +99,14 @@ them manually, or leave the verification step for the human.
   and keyboards of other packages are overlays. Never go back to "everything unknown is an app":
   such a window does not pause the app under it, so no probe can ever undo the wrong "user left",
   and grace then ends silently instead of re-intervening (the Instagram-comments bug).
+- The reverse also happens: a **real activity window that never took the foreground**. Android
+  briefly resumes the launcher under the app in front (UsageStats: launcher RESUMED → PAUSED, the
+  app never paused). Only UsageStats can tell, so `ForegroundResolver` tracks resumed state **per
+  activity** (never "the last resumed package": that reports nothing during such a blip) and
+  `EngineCore` P6b lets a probe that is ≥ 1 s younger than the last window event and names the
+  *only* resumed package put presence back. Keep both conditions; without them a probe taken
+  mid-switch or in split screen would move presence wrongly. Do not query UsageStats with a fixed
+  look-back window either: an activity resumed before the window looks like "nothing in front".
 - `GraceNotificationService` is cosmetic. Never put timers or session logic back into it.
 - Room is configured with `allowMainThreadQueries()` and
   `fallbackToDestructiveMigration()`. Bump the DB version when the schema changes; there

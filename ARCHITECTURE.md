@@ -110,17 +110,19 @@ com.chillpill/
 │   │   ├── EngineCore.kt              The state machine: presence, sessions, grace, warnings (pure, unit-tested)
 │   │   ├── EngineTrace.kt             JSON-lines trace of inputs/effects + codec for replay (pure JVM)
 │   │   ├── SessionEngine.kt           Android host: input channel, config, effects, StateFlows, wake-up timer
+│   │   ├── ForegroundResolver.kt      Pure: UsageStats activity events -> resumed package (per activity, across queries)
 │   │   └── ProcessExitLogger.kt       Why the previous process died (API 30+), for the trace
 │   ├── ChillpillAccessibilityService.kt  Adapter: window/screen events in, pill + popup overlays out
 │   ├── SuggestionEvaluator.kt         Whether an app qualifies for "restrict this?"; persists answers
-│   ├── ForegroundPackageQuery.kt      UsageStats lookup of the foreground package + its RESUME time
+│   ├── ForegroundPackageQuery.kt      UsageStats query feeding ForegroundResolver: foreground package, its RESUME time, onlyResumed
 │   ├── SuggestionOverlayManager.kt     Hosts suggestion-popup via TYPE_ACCESSIBILITY_OVERLAY
 │   ├── GraceWarningOverlayManager.kt   Hosts the grace-expiry warning pill via TYPE_ACCESSIBILITY_OVERLAY
 │   ├── GraceWarningView.kt            ComposeView subclass used as the pill's root (own class name)
 │   └── GraceNotificationService.kt    Ongoing notification while grace runs (cosmetic, no timers)
 
 app/src/test/java/com/chillpill/service/engine/   JVM tests: EngineCoreTest (scenarios), EngineFuzzTest,
-                                                  WindowClassifierTest, TraceReplayTest (+ resources/traces/)
+                                                  WindowClassifierTest, ForegroundResolverTest,
+                                                  TraceReplayTest (+ resources/traces/)
 app/src/test/java/com/chillpill/ui/settings/RestrictionReducingTest.kt   JVM unit tests for isRestrictionReducing
 │
 └── ui/
@@ -334,9 +336,18 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
 - **Self-healing presence:** while any live session exists (grace running, user inside, or a
   no-re-block app left < 15 s ago) and the screen is on, a UsageStats probe runs
   every 5 s and 1.5 s before each grace deadline; after screen-on / unlock a burst of 4 probes runs
-  (falling back to the app that was in front at screen-off). A probe is applied only when its RESUME
+  (falling back to the app that was in front at screen-off). A probe is applied when its RESUME
   is *newer* than the last window event, and dated to that RESUME, so the 10 s return window is
-  measured to when the user really came back.
+  measured to when the user really came back (P6).
+- **A probe may also contradict presence (P6b, the launcher-blip bug):** Android briefly resumes
+  the launcher under the app in front (UsageStats: launcher RESUMED → PAUSED, the app never
+  paused) and the launcher sends a real activity window event, so presence moves to the launcher
+  although the user never left. When a probe queried at least 1 s (`PROBE_SETTLE_MS`) after the
+  last window event says another package is the **only** one with a resumed activity, presence
+  goes back to it, dated to the false departure (absence of zero). Leaving a session app schedules
+  that check 1.2 s later; a session that ends "while away" (G3) schedules follow-up probes, so a
+  blip right before the deadline still leads to a block. Never applies in split screen (two
+  resumed packages) or without usage access (no result).
 - **Per-app state** (`AppState`): Idle (no entry) · `Blocking(kind, shownAt, uiVisible, instance)` ·
   `Session(graceDeadline, extensionsUsed, firstWarningDismissed, graceOver, leftAt)`.
   `leftAt == null` exactly while the user is in the app (invariant I2).
@@ -389,7 +400,13 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
 - `SuggestionEvaluator`: whether a non-restricted app qualifies for the popup (excluded list,
   launcher activity, `AppOpenTracker` dedupe, ≥30 min cumulative foreground in 12 h via UsageStats,
   not ignored / excluded), and persisting the answer (Restrict adds the app to the restricted set).
-- `ForegroundPackageQuery`: last un-paused RESUME in the last 10 min, with its timestamp.
+- `ForegroundPackageQuery` + `engine/ForegroundResolver` (pure): which package has the most
+  recently resumed activity that is still resumed, its RESUME time, and whether it is the only
+  resumed package. State is per activity (package + class), so a launcher that resumes and pauses
+  again does not hide the app that never paused. One synchronized resolver is kept across probes
+  and fed only the events since the previous query (10 s overlap and a query end 10 s in the
+  future, because UsageStats' clock can be ~2 s off ours); after a gap of more than 10 min it
+  starts over from the last 10 min.
 - `GraceNotificationService`: the ongoing notification while `graceActive`; started by the engine on
   every false→true transition, stops itself with `stopSelfResult(lastStartId)` when grace ends.
   **Cosmetic only** — no timers, no session logic.

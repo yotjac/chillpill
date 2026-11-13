@@ -29,7 +29,10 @@ class EngineFuzzTest {
                 h.send(input)
                 if (!h.autoProbe && r.nextInt(3) == 0) {
                     val result = if (r.nextBoolean()) null
-                    else ProbeResult(pkgs[r.nextInt(pkgs.size)], WindowKind.APP, h.now - r.nextLong(0, 5_000))
+                    else ProbeResult(
+                        pkgs[r.nextInt(pkgs.size)], WindowKind.APP, h.now - r.nextLong(0, 5_000),
+                        queriedAt = h.now - r.nextLong(0, 3_000), onlyResumed = r.nextBoolean()
+                    )
                     h.answerProbes(result)
                 }
             } catch (e: AssertionError) {

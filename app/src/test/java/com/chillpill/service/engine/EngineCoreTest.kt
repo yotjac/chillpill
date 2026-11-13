@@ -273,6 +273,149 @@ class EngineCoreTest {
         assertEquals(1, h.blocksShown(N).size)
     }
 
+    // ---- S6: the launcher resumes for a moment under the app in front (launcher blip) --------
+
+    /**
+     * Device bug 2026-10-04: during grace the Pixel launcher sends an *activity* window event
+     * (and UsageStats logs it RESUMED -> PAUSED) while Instagram stays in front, never paused.
+     * Presence moves to the launcher; the probe now reports "X is the only resumed package", and
+     * once that answer is at least PROBE_SETTLE_MS younger than the window event it puts presence
+     * back. Pill and re-intervention then happen in place.
+     */
+    @Test fun s6_launcherBlip_probeContradicts_presenceRestored_pillAndReInterventionInPlace() {
+        val h = h()
+        h.enterWithContinue(X)
+        h.truth = h.only(X) // X resumed once and is never paused
+        val deadline = h.session(X)!!.graceDeadline
+        h.advance(GRACE - 40_000)
+        h.home() // the blip: a real activity window of the launcher
+        val blipAt = h.now
+        assertEquals(L, h.core.presence.pkg)
+        assertNotNull(h.session(X)!!.leftAt)
+        h.advance(EngineCore.LEAVE_CHECK_DELAY_MS + 50) // the departure check, no 5 s wait
+        assertEquals(X, h.core.presence.pkg)
+        assertEquals(blipAt, h.core.presence.since) // back as of the false departure
+        assertNull(h.session(X)!!.leftAt)
+        assertEquals(deadline, h.session(X)!!.graceDeadline)
+        h.advance(deadline - 8_000 - h.now)
+        assertNotNull(h.warning())
+        h.advance(9_000)
+        assertEquals(listOf(BlockKind.INITIAL, BlockKind.RE_INTERVENTION), h.blocksShown(X).map { it.kind })
+        assertEquals(1, h.usage(UsageKind.GRACE_EXPIRED_WHILE_ACTIVE, X))
+        assertEquals(0, h.usage(UsageKind.GRACE_EXPIRED_WHILE_AWAY, X))
+    }
+
+    /** Control: what the old lookup answered during the blip (nothing) reproduces the report. */
+    @Test fun s6_control_inconclusiveProbes_endSessionSilently_thenBlockOnNextActivityEvent() {
+        val h = h()
+        h.enterWithContinue(X)
+        h.truth = null
+        h.advance(GRACE - 40_000)
+        h.home()
+        h.advance(60_000)
+        assertNull(h.warning())
+        assertEquals(1, h.blocksShown(X).size) // no re-intervention at the deadline
+        assertEquals(1, h.usage(UsageKind.GRACE_EXPIRED_WHILE_AWAY, X))
+        h.popup(X); h.advance(20_000) // comment sheets: still nothing
+        assertEquals(1, h.blocksShown(X).size)
+        h.app(X) // the next activity event is an "entry"
+        assertEquals(listOf(BlockKind.INITIAL, BlockKind.INITIAL), h.blocksShown(X).map { it.kind })
+    }
+
+    /** Apps with "Block again after grace" OFF: a blip must not end the session after 10 s "away". */
+    @Test fun s6_launcherBlip_noReblockApp_pastGrace_keepsItsSession() {
+        val h = h()
+        h.enterWithContinue(N)
+        h.truth = h.only(N)
+        h.advance(GRACE + 30_000)
+        assertTrue(h.session(N)!!.graceOver)
+        h.home()
+        h.advance(20_000)
+        assertEquals(N, h.core.presence.pkg)
+        h.app(N)
+        assertEquals(1, h.blocksShown(N).size)
+    }
+
+    /** A query made right after the window event may not see that switch yet: not trusted. */
+    @Test fun s6_probeTakenRightAfterTheWindowEvent_isNotTrusted() {
+        val h = h()
+        h.enterWithContinue(X)
+        val resumed = h.now
+        h.advance(10_000)
+        h.autoProbe = false
+        h.home()
+        val left = h.now
+        fun probe(queriedAt: Long) =
+            h.send(Input.Probe(ProbeResult(X, WindowKind.APP, resumed, queriedAt, onlyResumed = true), 9_999, h.now))
+        h.advance(EngineCore.PROBE_SETTLE_MS - 1)
+        probe(queriedAt = h.now)
+        assertEquals(L, h.core.presence.pkg)
+        h.advance(500)
+        probe(queriedAt = left + EngineCore.PROBE_SETTLE_MS - 1) // delivered late, but asked too early
+        assertEquals(L, h.core.presence.pkg)
+        probe(queriedAt = left + EngineCore.PROBE_SETTLE_MS)
+        assertEquals(X, h.core.presence.pkg)
+        assertNull(h.session(X)!!.leftAt)
+    }
+
+    /** Split screen: two packages are resumed, so UsageStats cannot say which one is in front. */
+    @Test fun s6_twoResumedPackages_probeDoesNotOverrideTheWindowEvent() {
+        val h = h()
+        h.enterWithContinue(X)
+        val resumed = h.now
+        h.advance(10_000)
+        h.app(S)
+        h.truth = ProbeResult(X, WindowKind.APP, resumed, queriedAt = h.now + 20_000, onlyResumed = false)
+        h.advance(20_000)
+        assertEquals(S, h.core.presence.pkg)
+        assertNotNull(h.session(X)!!.leftAt)
+    }
+
+    /** Really going home: UsageStats agrees with the window event, nothing is put back. */
+    @Test fun s6_realGoHome_probeAgrees_sessionEndsAwayAndNextOpenBlocks() {
+        val h = h()
+        h.enterWithContinue(X)
+        h.advance(10_000)
+        h.home()
+        h.truth = h.only(L)
+        h.advance(GRACE)
+        assertEquals(L, h.core.presence.pkg)
+        assertEquals(1, h.blocksShown(X).size)
+        assertEquals(1, h.usage(UsageKind.GRACE_EXPIRED_WHILE_AWAY, X))
+        h.truth = null
+        h.app(X)
+        assertEquals(2, h.blocksShown(X).size)
+    }
+
+    /**
+     * A blip so close to the deadline that no trustworthy probe fits before it: the session ends
+     * "while away", but the follow-up probes notice and the app is blocked right after instead of
+     * running free until its next activity event.
+     */
+    @Test fun s6_launcherBlipJustBeforeDeadline_blockedRightAfterIt() {
+        val h = h()
+        h.enterWithContinue(X)
+        h.truth = h.only(X)
+        val deadline = h.session(X)!!.graceDeadline
+        h.advance(deadline - 500 - h.now)
+        h.home()
+        h.advance(500 + 2_000) // no window event of X in here
+        assertEquals(1, h.usage(UsageKind.GRACE_EXPIRED_WHILE_AWAY, X))
+        assertEquals(listOf(BlockKind.INITIAL, BlockKind.INITIAL), h.blocksShown(X).map { it.kind })
+        assertEquals(X, h.core.presence.pkg)
+    }
+
+    /** Our own block screen is never "contradicted": the probe for it is not an APP result. */
+    @Test fun s6_blockScreenUp_onlyResumedProbeOfOwnPackage_changesNothing() {
+        val h = h()
+        h.app(X)
+        h.blockAppears(X)
+        h.advance(5_000)
+        h.send(Input.Probe(ProbeResult(OWN, WindowKind.OWN_OVERLAY, h.now - 4_000, h.now, onlyResumed = true), 9_999, h.now))
+        assertEquals(WindowKind.OWN_BLOCK_UI, h.core.presence.kind)
+        assertEquals(1, h.blocksShown(X).size)
+    }
+
     @Test fun olderProbe_neverOverridesNewerWindowEvent() {
         val h = h()
         h.enterWithContinue(X)

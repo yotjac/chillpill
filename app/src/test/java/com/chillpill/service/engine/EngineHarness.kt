@@ -25,7 +25,7 @@ class EngineHarness(
     val effects = ArrayList<Effect>()
     private val history = ArrayList<String>()
 
-    /** What UsageStats would report; null = inconclusive. */
+    /** What UsageStats would report; null = inconclusive. See [only] for a P6b-grade answer. */
     var truth: ProbeResult? = null
 
     /** Answer RequestProbe immediately (true) or keep them for [answerProbes]. */
@@ -46,7 +46,7 @@ class EngineHarness(
         check(input)
         val probes = fx.filterIsInstance<Effect.RequestProbe>()
         if (probes.isNotEmpty()) {
-            if (autoProbe) probes.forEach { send(Input.Probe(truth, it.token, now)) }
+            if (autoProbe) probes.forEach { send(Input.Probe(stamp(truth), it.token, now)) }
             else probes.forEach { pendingProbes += it.token }
         }
         return fx
@@ -55,8 +55,18 @@ class EngineHarness(
     fun answerProbes(result: ProbeResult? = truth) {
         val tokens = pendingProbes.toList()
         pendingProbes.clear()
-        tokens.forEach { send(Input.Probe(result, it, now)) }
+        tokens.forEach { send(Input.Probe(stamp(result), it, now)) }
     }
+
+    /**
+     * "[pkg] is the only package with a resumed activity, since [resumedAt]": what the per-activity
+     * UsageStats lookup reports for an app that was never paused. As [truth] it is stamped with the
+     * time of each query, like a real probe.
+     */
+    fun only(pkg: String, resumedAt: Long = now) = ProbeResult(pkg, WindowKind.APP, resumedAt, onlyResumed = true)
+
+    private fun stamp(r: ProbeResult?) =
+        if (r != null && r.onlyResumed && r.queriedAt == 0L) r.copy(queriedAt = now) else r
 
     private fun check(input: Input) {
         val v = core.invariantViolations(now)

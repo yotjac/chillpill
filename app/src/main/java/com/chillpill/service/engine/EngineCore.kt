@@ -152,7 +152,12 @@ class EngineCore {
     private fun leave(pkg: String?, at: Long) {
         if (pkg == null) return
         val state = apps[pkg]
-        if (state is Session && state.leftAt == null) apps[pkg] = state.copy(leftAt = at)
+        if (state is Session && state.leftAt == null) {
+            apps[pkg] = state.copy(leftAt = at)
+            // Have UsageStats confirm the departure as soon as its answer can be trusted (P6b),
+            // rather than at the next reconciliation up to 5 s later.
+            followUpProbes += at + LEAVE_CHECK_DELAY_MS
+        }
         if (suggestion?.pkg == pkg) suggestion = null // B2
     }
 
@@ -183,13 +188,22 @@ class EngineCore {
         val b = burst
         val inBurst = b != null && b.outstanding.remove(input.token)
         val r = input.result
-        if (presence.screenOn && r != null && r.kind == WindowKind.APP &&
-            r.pkg != presence.pkg && r.resumedAt > presence.since
-        ) {
-            // UsageStats saw a switch newer than our last window event: believe it, as of the
-            // moment it happened.
-            onForeground(r.pkg, WindowKind.APP, r.resumedAt, out)
-            return
+        if (presence.screenOn && r != null && r.kind == WindowKind.APP && r.pkg != presence.pkg) {
+            if (r.resumedAt > presence.since) {
+                // UsageStats saw a switch newer than our last window event: believe it, as of the
+                // moment it happened.
+                onForeground(r.pkg, WindowKind.APP, r.resumedAt, out)
+                return
+            }
+            if (r.onlyResumed && r.queriedAt - presence.since >= PROBE_SETTLE_MS) { // P6b
+                // UsageStats positively contradicts us: well after our last window event, r.pkg
+                // is the only package with a resumed activity, so whatever that window was, it
+                // did not take the foreground (the launcher resumes for a moment under the app
+                // in front without pausing it). The user never left r.pkg: put presence back as
+                // of the false departure, so its session sees an absence of zero.
+                onForeground(r.pkg, WindowKind.APP, presence.since, out)
+                return
+            }
         }
         if (inBurst && burst === b && b!!.slots.isEmpty() && b.outstanding.isEmpty()) {
             burst = null
@@ -365,6 +379,11 @@ class EngineCore {
             else -> { // G3
                 apps.remove(pkg)
                 out += Effect.RecordUsage(pkg, UsageKind.GRACE_EXPIRED_WHILE_AWAY)
+                // With the session gone reconciliation stops. Look once more: if "away" was a
+                // false departure just before the deadline (too fresh for P6b), the probe puts
+                // presence back and the app is blocked (E2) instead of running free until its
+                // next window event.
+                scheduleFollowUpProbes(state.graceDeadline)
             }
         }
     }
@@ -501,6 +520,14 @@ class EngineCore {
         /** How long the pill shows "10 s added" after an accepted extension. */
         const val EXTEND_CONFIRMATION_MS = 1_200L
         const val RECONCILE_INTERVAL_MS = 5_000L
+        /**
+         * P6b: a probe must have been taken this long after the last window event before
+         * "another package is the only resumed one" is believed; a real switch is in UsageStats
+         * well within that time.
+         */
+        const val PROBE_SETTLE_MS = 1_000L
+        /** A session app was left: probe once the answer is old enough for P6b. */
+        const val LEAVE_CHECK_DELAY_MS = PROBE_SETTLE_MS + 200L
         const val PRE_DEADLINE_PROBE_MS = 1_500L
         const val BURST_PROBES = 4
         const val BURST_SPACING_MS = 400L

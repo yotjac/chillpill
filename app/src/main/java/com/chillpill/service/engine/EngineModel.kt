@@ -93,8 +93,22 @@ sealed interface AppState {
     ) : AppState
 }
 
-/** Result of a UsageStats foreground lookup, already classified and converted to elapsed time. */
-data class ProbeResult(val pkg: String, val kind: WindowKind, val resumedAt: Long)
+/**
+ * Result of a UsageStats foreground lookup, already classified and converted to elapsed time:
+ * [pkg] has the most recently resumed activity that is still resumed, since [resumedAt].
+ *
+ * [queriedAt] and [onlyResumed] must stay primitives with these defaults: traces recorded before
+ * they existed decode to 0 / false, which switches rule P6b off and replays them unchanged.
+ */
+data class ProbeResult(
+    val pkg: String,
+    val kind: WindowKind,
+    val resumedAt: Long,
+    /** Just before the lookup ran; what it says is true as of this moment. */
+    val queriedAt: Long = 0L,
+    /** No other package has a resumed activity (never true in split screen). */
+    val onlyResumed: Boolean = false
+)
 
 sealed interface Input {
     val at: Long

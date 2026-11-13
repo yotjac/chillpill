@@ -1,5 +1,7 @@
 # Session engine: one source of truth for the blocking pipeline
 
+Amended 2026-10-04 (launcher blip: probes may contradict presence, see "Amendment 2026-10-04").
+
 Status: IMPLEMENTED 2026-09-24 (tasks 1–15). Engine unit tests (56, incl. 10 000 fuzz sequences)
 pass on a plain JVM; the Android build, lint and device pass (tasks 16–17) are still open — the
 implementing session had no Android SDK. See "Implementation notes" for deviations from the Design.
@@ -143,7 +145,7 @@ sealed interface AppState {
 
 sealed interface Input { val at: Long
     Window(pkg, className, kind, at) · ScreenOff(at) · ScreenOn(at, keyguardLocked) · UserPresent(at)
-    Probe(result: ProbeResult?, token, at)          // ProbeResult(pkg, kind, resumedAt)
+    Probe(result: ProbeResult?, token, at)          // ProbeResult(pkg, kind, resumedAt, queriedAt, onlyResumed)
     BlockStarted(pkg, instance, at) · BlockStopped(pkg, instance, at) · BlockClosed(pkg, reason, instance, at)
     ContinueTapped(pkg, at) · ExtendTapped(pkg, at) · WarningDismissed(pkg, at)
     SuggestionEligible(pkg, appName, at) · SuggestionAnswered(pkg, answer, at)
@@ -202,13 +204,23 @@ The engine handles that through the block screen's own lifecycle (rule E3 below)
 - **P6 Probe(result).** Ignored while the screen is off. Applied as `Window(result.pkg, APP,
   at = result.resumedAt)` when the result is `APP`, differs from `presence.pkg`, and
   `result.resumedAt > presence.since` — i.e. UsageStats knows about a *newer* switch than our
-  last window event. Otherwise ignored (an older RESUME never overrides a newer window event). If a
-  burst ends with presence still null and every probe inconclusive, apply
+  last window event. If a burst ends with presence still null and every probe inconclusive, apply
   `Window(screenOffPkg, APP, at = burst start)` (today's fallback).
+- **P6b Probe contradicts presence** (added 2026-10-04, the launcher-blip bug; see "Amendment"
+  below). A result that is `APP`, differs from `presence.pkg`, has `onlyResumed` (UsageStats: this
+  is the *only* package with a resumed activity, so the package we believe in front is positively
+  not resumed) and was queried at least `PROBE_SETTLE_MS` (1 s) after `presence.since` is applied
+  as `Window(result.pkg, APP, at = presence.since)`: the user never left, so the session sees an
+  absence of zero. Everything else is ignored: an older RESUME alone never overrides a newer window
+  event, and a query made right after a window event may simply not see that switch yet.
 - **P7 Reconciliation.** While any `Session` exists and the screen is on: one probe every 5 s,
-  and one 1.5 s before each grace deadline. Same rule as P6. This is what repairs S1/S2's stale
-  launcher state: X's RESUME after unlock is newer than the launcher's window event, so presence
-  becomes X *as of X's resume time*, and the return-window check uses that time.
+  and one 1.5 s before each grace deadline. Same rules as P6 / P6b. This is what repairs S1/S2's
+  stale launcher state: X's RESUME after unlock is newer than the launcher's window event, so
+  presence becomes X *as of X's resume time*, and the return-window check uses that time.
+  Two extra probes serve P6b: leaving an app that has a `Session` schedules one
+  `LEAVE_CHECK_DELAY_MS` (1.2 s) later, the earliest moment its answer can be trusted; and when a
+  re-intervention session ends "while away" (G3), follow-up probes (+0.3 s, +1 s) run once more,
+  so a false departure just before the deadline is still noticed (the app is then blocked by E2).
 
 `leave(X, at)`: if X has a `Session` with `leftAt == null`, set `leftAt = at`. If the suggestion
 popup is about X, close it (B2).
@@ -250,7 +262,7 @@ evaluated against presence *as it was at the deadline*:
 |---|---|---|
 | G1 | no-reblock | `graceOver = true`, `RecordUsage(GRACE_EXPIRED_WHILE_ACTIVE / _AWAY)`; session stays (E7 still applies) |
 | G2 | re-intervention, presence == X, screen on | `Blocking(RE_INTERVENTION)`, `ShowBlock`, `RecordUsage(OPEN_ATTEMPT)` + `GRACE_EXPIRED_WHILE_ACTIVE` |
-| G3 | re-intervention, otherwise | Idle, `RecordUsage(GRACE_EXPIRED_WHILE_AWAY)` |
+| G3 | re-intervention, otherwise | Idle, `RecordUsage(GRACE_EXPIRED_WHILE_AWAY)`; follow-up probes (P7) |
 
 G2 and the pill read the **same** presence value. That is the structural fix for S2: the pill
 cannot be gated on one belief while expiry uses another.
@@ -298,6 +310,8 @@ cannot be gated on one belief while expiry uses another.
   `TYPE_ACCESSIBILITY_OVERLAY`). The pill's buttons send `ExtendTapped` / `WarningDismissed`; the
   manager's own `dismissedFor` logic goes (the engine owns it).
 - **`ForegroundPackageQuery`** returns `ProbeResult(pkg, resumedAtWall)` instead of a bare package.
+  Since 2026-10-04 it feeds the UsageStats events to the pure `engine/ForegroundResolver`, which
+  tracks resumed state **per activity** (see "Amendment").
 - **`SuggestionEvaluator`** (new, `service/`): the non-engine half of today's
   `handleNonRestrictedApp` — excluded list, launcher check, `AppOpenTracker`, 12 h usage query,
   ignore/exclusion repos — then sends `SuggestionEligible`. `PersistSuggestionAnswer` /
@@ -331,6 +345,7 @@ service/
     EngineModel.kt        Input, Effect, AppState, Presence, Config, WarningUi, SuggestionUi
     WindowClassifier.kt   pure classification
     EngineCore.kt         pure reducer: presence + sessions + derived state + wake-ups
+    ForegroundResolver.kt pure: UsageStats activity events -> which package is resumed (2026-10-04)
     SessionEngine.kt      host: channel, config collection, timer, effects, StateFlows
     EngineTrace.kt        JSONL trace writer
     ProcessExitLogger.kt  exit reasons → trace
@@ -346,8 +361,10 @@ tests ported), data/blockstate/BlockSharedState.kt (unused).
 ### Risks
 - **R1 Reconciliation cost.** A UsageStats query every 5 s while a session exists and the screen
   is on. The query is bounded to the last 10 min; if it shows up in battery stats, widen to 10 s.
-- **R2 Probe corrections are only as good as UsageStats.** P6 only ever applies a *newer* RESUME,
-  so the worst case is today's behaviour (no correction), not a wrong one.
+- **R2 Probe corrections are only as good as UsageStats.** P6 only ever applies a *newer* RESUME.
+  P6b additionally trusts "X is the only resumed package" against a window event that is at least
+  1 s old; it cannot fire in split screen (two resumed packages) or without usage access (no
+  result), where the worst case stays "no correction".
 - **R3 E4 timing.** 2 s launch guard: a block that launches slower than that could be shown
   twice. The instance id makes the replaced screen's close harmless; check on a slow device.
 - **R4 Big-bang change.** No shadow mode, by decision. Mitigated by the scenario, invariant and
@@ -407,6 +424,85 @@ tests ported), data/blockstate/BlockSharedState.kt (unused).
   `WindowClassifierTest`, `TraceReplayTest` (codec round trip, rotation, a hand-written S1 trace).
   Mutation-checked: disabling the probe correction, the screen-off exit or the absorb rule each
   makes tests fail.
+
+## Amendment 2026-10-04: launcher blip (presence that only UsageStats can contradict)
+
+### Problem (device trace + `dumpsys usagestats`, 2026-10-04)
+Instagram in grace, user never leaves it. Twice within ten minutes grace ended silently (no pill,
+no re-intervention) and a later Instagram activity event showed the initial block instead.
+
+- Android briefly resumes the Pixel launcher while the app stays in front. UsageStats:
+  `NexusLauncherActivity` ACTIVITY_RESUMED → PAUSED → STOPPED within one second, and **no
+  ACTIVITY_PAUSED for Instagram**. The launcher sends two window events ~5 ms apart. About a dozen
+  such blips in 24 h, over many apps, so this is routine on that device (trigger not identified;
+  no launcher process restart).
+- The window is a real activity, so the classifier (positive evidence) says `APP` and P1 moves
+  presence to the launcher; the session gets `leftAt`.
+- Reconciliation could not repair it, for two reasons:
+  1. `ForegroundPackageQuery` remembered one "last resumed package" and reported nothing once that
+     package paused. Last RESUME = launcher, launcher paused → `null` on every probe, although
+     Instagram's activity was still resumed.
+  2. Even a correct answer (Instagram, resumed 90 s ago) is older than the launcher's window
+     event, and P6 only applies newer RESUMEs.
+- The deadline then took G3 (`GRACE_EXPIRED_WHILE_AWAY`), and Instagram's next activity window
+  event was an entry: E2.
+
+A second flaw found on the way: the query only read the last 10 minutes, so after 10 minutes
+inside one activity its RESUME left the window and every probe was `null` (no self-healing in
+long sessions).
+
+### Design
+- **`ForegroundResolver`** (pure, `service/engine/`): keeps the set of activities (package +
+  class) that are resumed and not paused / stopped since, fed with UsageStats events in order.
+  `snapshot()` = the most recently resumed one, plus `onlyResumed` (no *other* package has a
+  resumed activity). A launcher that resumes and pauses again no longer hides the app that never
+  paused. An unmatched PAUSED / STOPPED is ignored.
+- **Continuity instead of a fixed window.** `ForegroundPackageQuery` keeps one resolver and a
+  cursor: each query reads only the events since the previous query (minus 10 s overlap;
+  re-applying the tail of an ordered log is idempotent), so an activity resumed hours ago stays
+  known for as long as probes keep running. UsageStats stamps events with its own wall clock,
+  which drifts up to ~2 s from `System.currentTimeMillis()` before it re-syncs (seen in the dump),
+  hence the overlap and a query end 10 s in the future: a switch UsageStats already knows must
+  never be missing from an answer P6b is going to trust. When more than 10 minutes passed since the last query
+  (no session, screen off) or the wall clock went backwards, the resolver starts over from the
+  last 10 minutes, which also bounds any drift. Synchronized: probes run on `Dispatchers.IO`.
+- **`ProbeResult`** gains `queriedAt` (elapsed time just before the query ran) and `onlyResumed`.
+  Both are primitives, so traces recorded before this change decode with `0` / `false` and replay
+  exactly as before.
+- **P6b** (see Presence rules), the **departure check** and **follow-up probes on G3** (see P7).
+  With them a blip is repaired about 1.2 s after it happened; one in the last second before the
+  deadline ends the session "while away" and the app is blocked about a second later (initial
+  block, no pill), instead of running free until its next activity event.
+- Not covered: without usage access there is no probe result, so a blip is not repaired (the
+  behaviour before this change). Using the accessibility window list instead would need
+  `canRetrieveWindowContent`, which this app deliberately does not request.
+
+### Tasks
+- [x] A1. `ForegroundResolver` + `ForegroundResolverTest` (the dumped event sequence of both
+      incidents, real go-home, resume-before-pause order, unmatched pause, overlap re-application,
+      continuity loss).
+- [x] A2. `ForegroundPackageQuery` on top of the resolver (cursor, overlap, synchronized).
+- [x] A3. `ProbeResult.queriedAt` / `onlyResumed`; `SessionEngine` fills them.
+- [x] A4. `EngineCore`: P6b, follow-up probes on G3. `EngineCoreTest` S6 scenarios (blip repaired →
+      pill + re-intervention in place; no-re-block app keeps its session; fresh query is not
+      trusted; split screen is not trusted; blip right before the deadline → blocked right after).
+      Fuzz test sends `onlyResumed` probes.
+- [x] A5. `TraceReplayTest.s6_launcherBlip_trace` with `traces/s6-launcher-blip.jsonl` (window
+      events as recorded on the device, probe results as the fixed query reports them for the
+      dumped UsageStats events).
+- [x] A6. `ARCHITECTURE.md` (§3, §6.1, §6.4), AGENTS.md gotcha.
+- [x] A6b. Verified on a plain JVM (kotlinc 1.9.22 + JUnit): 85 tests green, incl. the fuzz test
+      with `onlyResumed` probes. Mutation-checked: switching off P6b, its settle time, its
+      `onlyResumed` condition, the dating at `presence.since`, or the two extra probes each makes
+      tests fail. Replaying the recorded probes of the whole device trace against the dumped
+      events: the new lookup agrees wherever the old one had an answer (one probe taken mid-switch
+      aside; the dump has 1 s resolution) and fills its two kinds of gaps (blips; sessions longer
+      than 10 min). `ForegroundPackageQuery` and `SessionEngine`
+      (Android code) were **not compiled** in that session.
+- [ ] A6c. `./gradlew testDebugUnitTest lintDebug assembleDebug` green (Yotam).
+- [ ] A7. Device pass: (m) in a restricted app during grace, wait for / provoke a launcher blip
+      (trace shows a `NexusLauncherActivity` window event while staying in the app): the next
+      probe moves presence back, the pill appears, re-intervention fires at the deadline.
 
 ## Tasks
 

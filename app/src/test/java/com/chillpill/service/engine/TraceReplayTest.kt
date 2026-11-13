@@ -85,6 +85,35 @@ class TraceReplayTest {
         assertEquals("com.instagram.android", core.presence.pkg)
     }
 
+    /**
+     * Device trace of 2026-10-04 (the launcher-blip bug), cut at the first grace deadline. The
+     * window, screen and block inputs are as recorded: 88 s into grace `NexusLauncherActivity`
+     * sends two window events although the user stays in Instagram. The probe results are what
+     * the per-activity lookup reports for the UsageStats events dumped from the same device
+     * (Instagram resumed and never paused; the recorded lookup answered null from the blip on).
+     * Presence returns to Instagram, the pill shows, and the deadline re-intervenes in place; on
+     * the device grace ended "while away" and the block came minutes later as an initial one.
+     */
+    @Test fun s6_launcherBlip_trace() {
+        val insta = "com.instagram.android"
+        val inputs = load("s6-launcher-blip.jsonl")
+        val deadline = inputs.filterIsInstance<Input.ContinueTapped>().single().at + 180_000
+
+        val beforeDeadline = deadline - 8_000
+        val (early, _) = replay(inputs.filter { it.at <= beforeDeadline }, now = beforeDeadline)
+        assertEquals(insta, early.presence.pkg)
+        assertEquals(WarningUi(insta, deadline, canExtend = true, dismissible = true), early.warning(beforeDeadline))
+
+        val (core, effects) = replay(inputs)
+        assertEquals(
+            listOf(BlockKind.INITIAL, BlockKind.RE_INTERVENTION),
+            effects.filterIsInstance<Effect.ShowBlock>().map { it.kind }
+        )
+        assertEquals(0, effects.count { it is Effect.RecordUsage && it.kind == UsageKind.GRACE_EXPIRED_WHILE_AWAY })
+        assertEquals(1, effects.count { it is Effect.RecordUsage && it.kind == UsageKind.GRACE_EXPIRED_WHILE_ACTIVE })
+        assertEquals(insta, core.presence.pkg)
+    }
+
     /** Every trace dropped into resources must at least replay without breaking an invariant. */
     @Test fun allTraces_replayCleanly() {
         val dir = javaClass.classLoader!!.getResource("traces")?.let { File(it.toURI()) } ?: return
