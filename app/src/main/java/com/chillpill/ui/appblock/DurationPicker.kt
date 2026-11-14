@@ -44,10 +44,17 @@ fun DurationPicker(
     onToggleRange: () -> Unit,
     modifier: Modifier = Modifier,
     /** False while the picker is laid out but not revealed yet (re-intervention wait). */
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    /** Link picker: the whole range is 1–[limit], without "need longer?" (specs/link-pass.md). */
+    limit: Int? = null
 ) {
-    val max = if (extended) AppBlockViewModel.PICK_EXTENDED_MAX_MINUTES else AppBlockViewModel.PICK_MAX_MINUTES
-    val quick = if (extended) AppBlockViewModel.PICK_EXTENDED_QUICK_MINUTES else AppBlockViewModel.PICK_QUICK_MINUTES
+    val max = limit
+        ?: if (extended) AppBlockViewModel.PICK_EXTENDED_MAX_MINUTES else AppBlockViewModel.PICK_MAX_MINUTES
+    val quick = when {
+        limit != null -> AppBlockViewModel.linkQuickMinutes(limit)
+        extended -> AppBlockViewModel.PICK_EXTENDED_QUICK_MINUTES
+        else -> AppBlockViewModel.PICK_QUICK_MINUTES
+    }
     val haptics = LocalHapticFeedback.current
     val minutesLabel = stringResource(R.string.pick_minutes, minutes)
 
@@ -64,7 +71,8 @@ fun DurationPicker(
             style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.ExtraBold),
             color = MaterialTheme.colorScheme.onSurface
         )
-        Slider(
+        // A 1-minute limit leaves nothing to slide: the label and the chip say it all.
+        if (max > 1) Slider(
             value = minutes.toFloat(),
             onValueChange = {
                 val v = it.roundToInt().coerceIn(1, max)
@@ -75,7 +83,7 @@ fun DurationPicker(
             },
             valueRange = 1f..max.toFloat(),
             enabled = enabled,
-            steps = max - 2, // one stop per minute
+            steps = (max - 2).coerceAtLeast(0), // one stop per minute
             modifier = Modifier
                 .fillMaxWidth()
                 .semantics { contentDescription = minutesLabel }
@@ -100,14 +108,16 @@ fun DurationPicker(
                 )
             }
         }
-        TextButton(onClick = onToggleRange, enabled = enabled, modifier = Modifier.padding(top = 2.dp)) {
-            Text(
-                text = if (extended) {
-                    stringResource(R.string.pick_shorter_range, AppBlockViewModel.PICK_MAX_MINUTES)
-                } else {
-                    stringResource(R.string.pick_need_longer)
-                }
-            )
+        if (limit == null) {
+            TextButton(onClick = onToggleRange, enabled = enabled, modifier = Modifier.padding(top = 2.dp)) {
+                Text(
+                    text = if (extended) {
+                        stringResource(R.string.pick_shorter_range, AppBlockViewModel.PICK_MAX_MINUTES)
+                    } else {
+                        stringResource(R.string.pick_need_longer)
+                    }
+                )
+            }
         }
     }
 }
@@ -119,7 +129,11 @@ class PickState(
     /** 0-s wait: no fill animation before the picker. */
     val instant: Boolean,
     val onMinutesChange: (Int) -> Unit,
-    val onToggleRange: () -> Unit
+    val onToggleRange: () -> Unit,
+    /** Link picker: its limit in minutes; null for a PICK app's picker. */
+    val limit: Int? = null,
+    /** Link picker capped because a link was opened in the last 15 min: say so. */
+    val limited: Boolean = false
 )
 
 /** Collects the picker state of [viewModel]; null unless its app is PICK. */
@@ -129,6 +143,10 @@ fun rememberPickState(viewModel: AppBlockViewModel): PickState? {
     val minutes by viewModel.pickMinutes.collectAsStateWithLifecycle()
     val extended by viewModel.pickExtended.collectAsStateWithLifecycle()
     val instant by viewModel.instant.collectAsStateWithLifecycle()
+    val limit by viewModel.pickLimit.collectAsStateWithLifecycle()
     if (!isPick) return null
-    return PickState(minutes, extended, instant, viewModel::onPickMinutesChanged, viewModel::onPickRangeToggled)
+    return PickState(
+        minutes, extended, instant, viewModel::onPickMinutesChanged, viewModel::onPickRangeToggled,
+        limit, limited = viewModel.isLink && viewModel.linkLimited
+    )
 }

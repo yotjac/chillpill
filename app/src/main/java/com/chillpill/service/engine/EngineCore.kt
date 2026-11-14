@@ -12,7 +12,7 @@ import java.util.TreeSet
  * - [handle] mutates state and returns the effects the host must execute. Derived UI state
  *   ([warning], [suggestion], [graceActive]) and the next wake-up are read after each call.
  *
- * Rule ids (P*, E*, A*, G*) refer to the spec.
+ * Rule ids (P*, E*, A*, G*) refer to the spec; L* (link pass) to specs/link-pass.md.
  */
 class EngineCore {
 
@@ -29,6 +29,24 @@ class EngineCore {
 
     /** Package in front when the screen last went off (P4); fallback of the probe burst (P6). */
     private var screenOffPkg: String? = null
+    private var screenOffHome = false
+
+    /**
+     * Last SystemUI window (shade, heads-up, Pixel's back-gesture panel) seen while an app was in
+     * front. Disqualifies L1 only when no activity of the app in front came after it: the user went
+     * on inside that app, so it was not a notification tap.
+     */
+    private var lastSystemUiAt = Long.MIN_VALUE
+
+    /** Latest window event of an activity of [presence]'s app (presence.since is only its first). */
+    private var presenceWindowAt = Long.MIN_VALUE
+
+    /** When each app's last link visit started (A2b); a link within 15 min of it is capped (L3). */
+    private val lastLinkPassAt = HashMap<String, Long>()
+
+    /** Where an entry came from (L1): the presence before it and its app's latest activity event. */
+    private class Source(val presence: Presence, val lastWindowAt: Long)
+
 
     var suggestion: SuggestionUi? = null
         private set
@@ -57,7 +75,7 @@ class EngineCore {
     /** Rule a new session of [pkg] starts with; apps still pending from the popup use the defaults. */
     private fun ruleFor(pkg: String): AppRule? = config?.let { it.rules[pkg] ?: it.defaultRule }
 
-    private val Session.pauseOnly: Boolean get() = rule.mode == Mode.PAUSE_ONLY
+    private val Session.pauseOnly: Boolean get() = rule.mode == Mode.PAUSE_ONLY && !linkPass
 
     // ---------------------------------------------------------------------------------------
     // Input handling
@@ -110,6 +128,10 @@ class EngineCore {
         when (input.kind) {
             WindowKind.OWN_OVERLAY, WindowKind.APP_OVERLAY -> Unit // P3
             WindowKind.SYSTEM_OVERLAY -> { // P3
+                if (input.pkg == WindowClassifier.SYSTEM_UI_PACKAGE && input.at >= presence.since) {
+                    // The shade or a heads-up: whatever opens next may be a notification tap (L1).
+                    lastSystemUiAt = maxOf(lastSystemUiAt, input.at)
+                }
                 // Over an app, SystemUI / keyboard windows never change presence. Over our block
                 // screen they do: whatever the user reaches from the shade (the blocked app's own
                 // notification) must not be mistaken for that app's late splash event.
@@ -123,12 +145,23 @@ class EngineCore {
                 presence = Presence(input.pkg, WindowKind.OWN_BLOCK_UI, input.at, screenOn = true)
                 burst = null
             }
-            WindowKind.APP, WindowKind.OWN_MAIN_UI -> onForeground(input.pkg, input.kind, input.at, out)
+            WindowKind.APP, WindowKind.OWN_MAIN_UI ->
+                onForeground(input.pkg, input.kind, input.at, out, home = input.home, viaWindow = true)
         }
     }
 
-    /** P1: [pkg] is in front as of [at]. */
-    private fun onForeground(pkg: String, kind: WindowKind, at: Long, out: MutableList<Effect>) {
+    /**
+     * P1: [pkg] is in front as of [at]. [viaWindow]: seen through its own window event, so what
+     * was in front before is where it was opened from (L1); probes and fallbacks are not.
+     */
+    private fun onForeground(
+        pkg: String,
+        kind: WindowKind,
+        at: Long,
+        out: MutableList<Effect>,
+        home: Boolean = false,
+        viaWindow: Boolean = false
+    ) {
         if (at < presence.since) return // older than what we already know
         val state = apps[pkg]
         if (kind == WindowKind.APP && state is Blocking && presence.kind == WindowKind.OWN_BLOCK_UI &&
@@ -142,10 +175,13 @@ class EngineCore {
         }
         burst = null
         if (pkg != presence.pkg) {
+            val from = Source(presence, maxOf(presenceWindowAt, presence.since))
             leave(presence.pkg, at)
-            presence = Presence(pkg, kind, at, screenOn = true)
-            if (kind == WindowKind.APP) evaluate(pkg, at, entry = true, out)
+            presence = Presence(pkg, kind, at, screenOn = true, home = home)
+            presenceWindowAt = at
+            if (kind == WindowKind.APP) evaluate(pkg, at, entry = true, out, openedFrom = if (viaWindow) from else null)
         } else {
+            if (viaWindow) presenceWindowAt = maxOf(presenceWindowAt, at)
             if (!presence.screenOn) presence = presence.copy(screenOn = true)
             if (kind == WindowKind.APP) evaluate(pkg, at, entry = false, out)
         }
@@ -166,6 +202,7 @@ class EngineCore {
 
     private fun onScreenOff(at: Long) { // P4
         leave(presence.pkg, at)
+        screenOffHome = presence.kind == WindowKind.APP && presence.home
         screenOffPkg = when (presence.kind) {
             WindowKind.APP -> presence.pkg
             // Block screen in front: the user is "at" the blocked app. If the screen is gone after
@@ -195,7 +232,7 @@ class EngineCore {
             if (r.resumedAt > presence.since) {
                 // UsageStats saw a switch newer than our last window event: believe it, as of the
                 // moment it happened.
-                onForeground(r.pkg, WindowKind.APP, r.resumedAt, out)
+                onForeground(r.pkg, WindowKind.APP, r.resumedAt, out, home = r.home)
                 return
             }
             if (r.onlyResumed && r.queriedAt - presence.since >= PROBE_SETTLE_MS) { // P6b
@@ -204,7 +241,7 @@ class EngineCore {
                 // did not take the foreground (the launcher resumes for a moment under the app
                 // in front without pausing it). The user never left r.pkg: put presence back as
                 // of the false departure, so its session sees an absence of zero.
-                onForeground(r.pkg, WindowKind.APP, presence.since, out)
+                onForeground(r.pkg, WindowKind.APP, presence.since, out, home = r.home)
                 return
             }
         }
@@ -212,20 +249,21 @@ class EngineCore {
             burst = null
             val fallback = screenOffPkg
             if (presence.pkg == null && presence.screenOn && fallback != null) {
-                onForeground(fallback, WindowKind.APP, maxOf(b.startedAt, presence.since), out)
+                onForeground(fallback, WindowKind.APP, maxOf(b.startedAt, presence.since), out, home = screenOffHome)
             }
         }
     }
 
     // ---- session rules (E1–E8) ------------------------------------------------------------
 
-    private fun evaluate(pkg: String, at: Long, entry: Boolean, out: MutableList<Effect>) {
+    /** [openedFrom]: presence just before an entry seen through a window event (L1). */
+    private fun evaluate(pkg: String, at: Long, entry: Boolean, out: MutableList<Effect>, openedFrom: Source? = null) {
         if (pkg !in restricted) {
             if (entry) out += Effect.EvaluateSuggestion(pkg)
             return
         }
         when (val state = apps[pkg]) {
-            null -> block(pkg, BlockKind.INITIAL, out) // E2
+            null -> if (!linkPass(pkg, at, openedFrom, out)) block(pkg, BlockKind.INITIAL, out) // E2 / L1
             is Blocking -> // E3 / E4
                 if (!state.uiVisible && at - state.shownAt >= RELAUNCH_GUARD_MS) reshow(pkg, state, out)
             is Session -> {
@@ -238,10 +276,36 @@ class EngineCore {
                     apps[pkg] = state.copy(leftAt = null)
                 } else {
                     apps.remove(pkg) // E8
-                    block(pkg, BlockKind.INITIAL, out)
+                    if (!linkPass(pkg, at, openedFrom, out)) block(pkg, BlockKind.INITIAL, out) // L1
                 }
             }
         }
+    }
+
+    /**
+     * L1 (specs/link-pass.md): [pkg] was opened by another app (a link, a share). If its rule
+     * allows a link pass, show the link picker (no wait, "how long?") instead of the normal block.
+     * L3: if a link visit of [pkg] started less than [LINK_REPEAT_WINDOW_MS] ago, the picker only
+     * goes up to [LINK_REPEAT_MAX_MS] and says why. Fails strict: anything that is
+     * not clearly "came straight from another app's activity" gets the normal block.
+     */
+    private fun linkPass(pkg: String, at: Long, source: Source?, out: MutableList<Effect>): Boolean {
+        val from = source?.presence ?: return false
+        val rule = ruleFor(pkg) ?: return false
+        val limitMs = rule.linkPassMs ?: return false
+        if (from.pkg == null || from.pkg == pkg || from.kind != WindowKind.APP || from.home || !from.screenOn) return false
+        // Shade / heads-up after the source app's last activity event: a notification tap.
+        if (lastSystemUiAt >= source.lastWindowAt) return false
+        // No OPEN_ATTEMPT: this is not a block. LINK_PASS is recorded when the user picks (A2b).
+        val repeat = lastLinkPassAt[pkg]?.let { at - it < LINK_REPEAT_WINDOW_MS } == true
+        val maxMs = if (repeat) minOf(limitMs, LINK_REPEAT_MAX_MS) else limitMs
+        val limited = repeat && maxMs < limitMs
+        apps[pkg] = Blocking(
+            BlockKind.LINK, shownAt = clock, uiVisible = false, instance = null,
+            linkMaxMs = maxMs, linkLimited = limited
+        )
+        out += Effect.ShowBlock(pkg, BlockKind.LINK, maxMs, limited)
+        return true
     }
 
     private fun block(pkg: String, kind: BlockKind, out: MutableList<Effect>) {
@@ -254,7 +318,7 @@ class EngineCore {
     private fun reshow(pkg: String, state: Blocking, out: MutableList<Effect>) {
         // instance = null: the old activity is going away; only the new one's reports count.
         apps[pkg] = state.copy(shownAt = clock, uiVisible = false, instance = null)
-        out += Effect.ShowBlock(pkg, state.kind)
+        out += Effect.ShowBlock(pkg, state.kind, state.linkMaxMs, state.linkLimited)
         out += Effect.RecordUsage(pkg, UsageKind.OPEN_ATTEMPT)
     }
 
@@ -290,8 +354,19 @@ class EngineCore {
     }
 
     private fun onContinue(input: Input.ContinueTapped, out: MutableList<Effect>) { // A2 / A3
-        if (apps[input.pkg] !is Blocking) return
+        val blocking = apps[input.pkg] as? Blocking ?: return
         val rule = ruleFor(input.pkg) ?: return
+        if (blocking.kind == BlockKind.LINK) { // A2b
+            lastLinkPassAt[input.pkg] = input.at
+            apps[input.pkg] = Session(
+                graceDeadline = input.at + linkPickedMs(input.chosenMs, rule, blocking.linkMaxMs),
+                rule = rule,
+                linkPass = true,
+                leftAt = if (presenceIs(input.pkg)) null else input.at
+            )
+            out += Effect.RecordUsage(input.pkg, UsageKind.LINK_PASS)
+            return
+        }
         val graceMs = if (rule.mode == Mode.PICK) pickedMs(input.chosenMs) else rule.graceMs
         apps[input.pkg] = Session(
             graceDeadline = input.at + graceMs,
@@ -311,6 +386,19 @@ class EngineCore {
             extendedAt = input.at
         )
         out += Effect.RecordUsage(input.pkg, UsageKind.GRACE_EXTENDED)
+    }
+
+    /**
+     * A2b: a link visit: whole minutes, 1 min up to what the picker offered ([shownMaxMs], L3) and
+     * the rule's current limit (the full limit if nothing was picked; 1 min if link passes were
+     * turned off since the picker appeared).
+     */
+    private fun linkPickedMs(chosenMs: Long?, rule: AppRule, shownMaxMs: Long?): Long {
+        val ruleMax = rule.linkPassMs ?: PICK_MIN_MS
+        val max = minOf(ruleMax, shownMaxMs ?: ruleMax).coerceIn(PICK_MIN_MS, PICK_MAX_MS)
+        if (chosenMs == null) return max - max % MINUTE_MS
+        val minutes = (chosenMs + MINUTE_MS / 2) / MINUTE_MS
+        return (minutes * MINUTE_MS).coerceIn(PICK_MIN_MS, max - max % MINUTE_MS)
     }
 
     /** A2: the visit length a PICK app gets for [chosenMs]: whole minutes, 1–90; 5 min if none. */
@@ -384,6 +472,11 @@ class EngineCore {
                     pkg,
                     if (present) UsageKind.GRACE_EXPIRED_WHILE_ACTIVE else UsageKind.GRACE_EXPIRED_WHILE_AWAY
                 )
+            }
+            present && state.linkPass -> { // L2: the pass is over; now the app's normal block
+                apps.remove(pkg)
+                block(pkg, BlockKind.INITIAL, out)
+                out += Effect.RecordUsage(pkg, UsageKind.GRACE_EXPIRED_WHILE_ACTIVE)
             }
             present -> { // G2
                 apps[pkg] = Blocking(BlockKind.RE_INTERVENTION, shownAt = clock, uiVisible = false, instance = null)
@@ -554,5 +647,9 @@ class EngineCore {
         const val PICK_MAX_MS = 90L * MINUTE_MS
         /** PICK: length when nothing was picked (Continue without a choice, suggestion "Restrict"). */
         const val PICK_FALLBACK_MS = 5L * MINUTE_MS
+        /** L3: a link this soon after the start of the app's previous link visit is capped... */
+        const val LINK_REPEAT_WINDOW_MS = 15L * MINUTE_MS
+        /** ...to this. */
+        const val LINK_REPEAT_MAX_MS = 2L * MINUTE_MS
     }
 }

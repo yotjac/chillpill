@@ -282,12 +282,26 @@ fun AppBlockScreen(
                 if (pick != null && showCompleted) {
                     // Centred in the space the attempts text had.
                     DurationPicker(
-                        title = stringResource(R.string.pick_title),
+                        title = if (pick.limit != null) {
+                            stringResource(R.string.pick_link_title, appName)
+                        } else {
+                            stringResource(R.string.pick_title)
+                        },
                         minutes = pick.minutes,
                         extended = pick.extended,
                         onMinutesChange = pick.onMinutesChange,
-                        onToggleRange = pick.onToggleRange
+                        onToggleRange = pick.onToggleRange,
+                        limit = pick.limit
                     )
+                    if (pick.limited && pick.limit != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = stringResource(R.string.pick_link_limited, appName, pick.limit),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
             Column(

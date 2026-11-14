@@ -22,9 +22,20 @@ data class AppPolicy(
     /** PAUSE_ONLY: free re-entry window. TIME_LIMIT: time allowed. PICK: unused. */
     val minutes: Int = DEFAULT_MINUTES,
     /** "+10 s once" on the first warning pill (TIME_LIMIT / PICK). */
-    val extensionAllowed: Boolean = true
+    val extensionAllowed: Boolean = true,
+    /**
+     * Opened from another app (a link, a share): no wait, pick a visit of up to [linkPassMinutes]
+     * (specs/link-pass.md).
+     */
+    val linkPass: Boolean = false,
+    val linkPassMinutes: Int = DEFAULT_LINK_PASS_MINUTES
 ) {
-    fun toRule(): AppRule = AppRule(mode, minutes * 60_000L, extensionAllowed)
+    fun toRule(): AppRule = AppRule(
+        mode,
+        minutes * 60_000L,
+        extensionAllowed,
+        linkPassMs = if (linkPass) linkPassMinutes * 60_000L else null
+    )
 
     /** Wait of a block screen: the opening one, or the re-intervention ("time's up") one. */
     fun waitSeconds(reIntervention: Boolean): Int = if (reIntervention) timesUpWaitSeconds else openWaitSeconds
@@ -33,7 +44,8 @@ data class AppPolicy(
     fun sanitized(): AppPolicy = copy(
         openWaitSeconds = openWaitSeconds.coerceIn(minOpenWaitSeconds(mode), MAX_WAIT_SECONDS),
         timesUpWaitSeconds = timesUpWaitSeconds.coerceIn(MIN_TIMES_UP_WAIT_SECONDS, MAX_WAIT_SECONDS),
-        minutes = minutes.coerceIn(MIN_MINUTES, MAX_MINUTES)
+        minutes = minutes.coerceIn(MIN_MINUTES, MAX_MINUTES),
+        linkPassMinutes = linkPassMinutes.coerceIn(MIN_LINK_PASS_MINUTES, MAX_LINK_PASS_MINUTES)
     )
 
     companion object {
@@ -43,6 +55,10 @@ data class AppPolicy(
         const val MIN_TIMES_UP_WAIT_SECONDS = 1
         const val MIN_MINUTES = 1
         const val MAX_MINUTES = 1440 // 24 hours
+        const val DEFAULT_LINK_PASS_MINUTES = 10
+        const val MIN_LINK_PASS_MINUTES = 1
+        /** The picker's own limit (EngineCore.PICK_MAX_MS). */
+        const val MAX_LINK_PASS_MINUTES = 90
 
         fun minOpenWaitSeconds(mode: Mode): Int = if (mode == Mode.PICK) 0 else 1
 
@@ -87,6 +103,8 @@ object AppPolicyCodec {
         addProperty("timesUpWait", p.timesUpWaitSeconds)
         addProperty("minutes", p.minutes)
         addProperty("extension", p.extensionAllowed)
+        addProperty("linkPass", p.linkPass)
+        addProperty("linkMinutes", p.linkPassMinutes)
     }
 
     private fun fromJson(o: JsonObject): AppPolicy {
@@ -98,7 +116,9 @@ object AppPolicyCodec {
             openWaitSeconds = int("openWait", d.openWaitSeconds),
             timesUpWaitSeconds = int("timesUpWait", d.timesUpWaitSeconds),
             minutes = int("minutes", d.minutes),
-            extensionAllowed = try { o.get("extension")?.asBoolean ?: true } catch (_: Exception) { true }
+            extensionAllowed = try { o.get("extension")?.asBoolean ?: true } catch (_: Exception) { true },
+            linkPass = try { o.get("linkPass")?.asBoolean ?: false } catch (_: Exception) { false },
+            linkPassMinutes = int("linkMinutes", d.linkPassMinutes)
         ).sanitized()
     }
 }

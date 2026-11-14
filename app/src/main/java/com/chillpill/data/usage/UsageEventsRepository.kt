@@ -23,6 +23,8 @@ object UsageEventType {
 
     /** User bought ten more seconds from the grace-expiry warning pill. */
     const val GRACE_EXTENDED = "GRACE_EXTENDED"
+    /** Opened from another app and let in without a wait (specs/link-pass.md). */
+    const val LINK_PASS = "LINK_PASS"
 }
 
 class UsageEventsRepository(private val database: UsageDatabase) {

@@ -33,7 +33,16 @@ sealed class AppBlockEvent {
 class AppBlockViewModel(
     private val app: ChillpillApp,
     val packageName: String,
-    val isReIntervention: Boolean
+    val isReIntervention: Boolean,
+    /**
+     * Link picker (specs/link-pass.md): no wait, the picker goes up to the app's link limit
+     * (no "need longer?"), and Continue starts a link visit.
+     */
+    val isLink: Boolean = false,
+    /** Link picker maximum chosen by the engine (0 = unknown: use the app's setting). */
+    private val linkMaxMinutes: Int = 0,
+    /** Link picker capped to 2 min because a link was opened in the last 15 min (L3). */
+    val linkLimited: Boolean = false
 ) : ViewModel() {
 
     private val _phase = MutableStateFlow(AppBlockPhase.WAITING)
@@ -60,6 +69,10 @@ class AppBlockViewModel(
     /** Picker range: 1–30 min, or 1–90 after "need longer?". Resets with every new block screen. */
     private val _pickExtended = MutableStateFlow(false)
     val pickExtended: StateFlow<Boolean> = _pickExtended.asStateFlow()
+
+    /** Link picker: the app's link limit in minutes (the picker's whole range); null otherwise. */
+    private val _pickLimit = MutableStateFlow<Int?>(null)
+    val pickLimit: StateFlow<Int?> = _pickLimit.asStateFlow()
 
     /**
      * Open attempts in the last 24 h, shown on the block screen. Read when the screen opens (the
@@ -96,10 +109,19 @@ class AppBlockViewModel(
         val policy = withContext(Dispatchers.IO) {
             app.restrictions.first().policyFor(packageName)
         }
-        _isPick.value = policy.mode == Mode.PICK
-        // Opening wait, or the "time's up" wait on a re-intervention. Only PICK may wait 0 s.
-        val waitTimeSeconds = policy.waitSeconds(isReIntervention)
-            .coerceAtLeast(AppPolicy.minOpenWaitSeconds(policy.mode))
+        if (isLink) {
+            val limit = linkMaxMinutes.takeIf { it > 0 } ?: policy.linkPassMinutes
+            _pickLimit.value = limit
+            _pickMinutes.value = minOf(PICK_START_MINUTES, limit)
+        }
+        _isPick.value = isLink || policy.mode == Mode.PICK
+        // Opening wait, or the "time's up" wait on a re-intervention. Only PICK may wait 0 s; a
+        // link picker never waits.
+        val waitTimeSeconds = if (isLink) {
+            0
+        } else {
+            policy.waitSeconds(isReIntervention).coerceAtLeast(AppPolicy.minOpenWaitSeconds(policy.mode))
+        }
         _instant.value = waitTimeSeconds == 0
         val tickMs = 100L
         val totalMs = waitTimeSeconds * 1000L
@@ -130,11 +152,13 @@ class AppBlockViewModel(
         _pickMinutes.value = _pickMinutes.value.coerceAtMost(pickMaxMinutes())
     }
 
-    private fun pickMaxMinutes() = if (_pickExtended.value) PICK_EXTENDED_MAX_MINUTES else PICK_MAX_MINUTES
+    private fun pickMaxMinutes() = _pickLimit.value
+        ?: if (_pickExtended.value) PICK_EXTENDED_MAX_MINUTES else PICK_MAX_MINUTES
 
     /**
-     * Continue: the engine starts the grace period and records WAIT_COMPLETED. For a PICK app it
-     * gets the picked length (the engine clamps it again, so a stale policy here is harmless).
+     * Continue: the engine starts the grace period and records WAIT_COMPLETED. For a PICK app or
+     * a link picker it gets the picked length (the engine clamps it again, so a stale policy here
+     * is harmless).
      */
     fun onContinue() {
         val chosenMs = if (_isPick.value) _pickMinutes.value * 60_000L else null
@@ -167,5 +191,10 @@ class AppBlockViewModel(
         val PICK_EXTENDED_MAX_MINUTES = (EngineCore.PICK_MAX_MS / 60_000L).toInt()
         val PICK_QUICK_MINUTES = listOf(5, 10, 15, 20, 25, 30)
         val PICK_EXTENDED_QUICK_MINUTES = listOf(15, 30, 45, 60, 75, 90)
+        private val LINK_QUICK_CANDIDATES = listOf(1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 75, 90)
+
+        /** Quick chips of a link picker limited to [limit] minutes: up to six, ending at the limit. */
+        fun linkQuickMinutes(limit: Int): List<Int> =
+            (LINK_QUICK_CANDIDATES.filter { it < limit } + limit).takeLast(6)
     }
 }

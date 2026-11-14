@@ -23,6 +23,9 @@
 
     <!-- Duration picker ("Pick your time" apps) -->
     <string name="pick_title">how long do you need?</string>
+    <string name="pick_link_title">a link opened %1$s. how long do you need?</string>
+    <!-- Link opened < 15 min after the last link visit (EngineCore.LINK_REPEAT_WINDOW_MS). -->
+    <string name="pick_link_limited">you opened %1$s from a link in the last 15 min, so this one is up to %2$d min</string>
     <string name="pick_another_round">take another round?</string>
     <string name="pick_minutes">%1$d min</string>
     <string name="pick_open_for">open for %1$d min</string>
@@ -121,6 +124,12 @@
     <string name="policy_summary_pause">%1$s · %2$d s · %3$d min re-entry</string>
     <string name="policy_summary_limit">%1$s · %2$d s · %3$d min</string>
     <string name="policy_summary_pick">%1$s · %2$d s</string>
+    <!-- Link pass (specs/link-pass.md). -->
+    <string name="policy_link_title">Opened from a link</string>
+    <string name="policy_link_switch">Skip the wait for links</string>
+    <string name="policy_link_description">When another app opens %1$s (a link or a share), skip the wait and choose how long to stay, up to the limit below. After that, the usual wait.</string>
+    <string name="policy_link_minutes">Longest link visit (minutes)</string>
+    <string name="policy_summary_link_suffix">%1$s · links ≤ %2$d min</string>
     <string name="settings_delta_removed">-%1$d</string>
     <string name="settings_delta_added">+%1$d</string>
 

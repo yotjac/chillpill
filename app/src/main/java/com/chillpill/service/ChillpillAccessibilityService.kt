@@ -15,6 +15,7 @@ import com.chillpill.service.engine.Input
 import com.chillpill.service.engine.SessionEngine
 import com.chillpill.service.engine.SuggestionAnswer
 import com.chillpill.service.engine.SuggestionUi
+import com.chillpill.service.engine.WindowKind
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -127,7 +128,12 @@ class ChillpillAccessibilityService : AccessibilityService() {
         val pkg = event.packageName?.toString() ?: return
         val className = event.className?.toString()
         val kind = engine.classifier.classify(pkg, className)
-        engine.send(Input.Window(pkg, className, kind, SessionEngine.elapsedFromUptime(event.eventTime)))
+        engine.send(
+            Input.Window(
+                pkg, className, kind, SessionEngine.elapsedFromUptime(event.eventTime),
+                home = kind == WindowKind.APP && engine.isHomePackage(pkg)
+            )
+        )
     }
 
     override fun onInterrupt() {}

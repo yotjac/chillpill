@@ -111,6 +111,10 @@ them manually, or leave the verification step for the human.
   (`Session.rule`); read the mode from there, never from the current config, or a settings change
   mixes modes mid-session. Wait times are UI-only (`AppBlockViewModel` reads `AppPolicy`); the
   engine only gets mode, grace and "+10 s allowed", and clamps a picked length itself (1–90 min).
+- **Link pass** (`specs/link-pass.md`): "opened from a link" is *inferred* (the app's activity came
+  straight over another, non-home app's activity, no SystemUI window in between, seen through a
+  window event). Keep it failing strict: when in doubt, block. A link-pass session is never
+  PAUSE_ONLY and ends in the *initial* block, not re-intervention.
 - `GraceNotificationService` is cosmetic. Never put timers or session logic back into it.
 - Room is configured with `allowMainThreadQueries()` and
   `fallbackToDestructiveMigration()`. Bump the DB version when the schema changes; there

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Link pass — visual demo</title>
+<style>
+  :root {
+    --bg: #f4f6f8; --ink: #1e293b; --muted: #64748b; --line: #e2e8f0; --card: #ffffff;
+    --primary: #0d9488; --tonal: #ccfbf1; --tonal-ink: #134e4a; --pending: #b45309;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, Roboto, sans-serif; background: #e9edf1; color: var(--ink); padding: 24px 16px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.lead { margin: 0 0 20px; color: var(--muted); font-size: 14px; max-width: 760px; }
+  .row { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .cap { font-size: 12px; color: var(--muted); max-width: 300px; }
+  .frame { width: 300px; border-radius: 28px; background: var(--bg); overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.18); border: 6px solid #111; padding: 12px; }
+  .card { background: var(--card); border-radius: 12px; padding: 12px; }
+  .head { display: flex; align-items: center; gap: 10px; }
+  .icon { width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg,#f58529,#dd2a7b,#8134af); }
+  .title { font-weight: 600; font-size: 15px; }
+  .sum { font-size: 12px; color: var(--muted); }
+  .sum b { color: var(--pending); font-weight: 500; }
+  .h2 { font-size: 13px; font-weight: 600; margin: 12px 0 4px; }
+  .mode { display: flex; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 6px; font-size: 13px; }
+  .mode.sel { background: var(--tonal); color: var(--tonal-ink); }
+  .radio { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--muted); flex: none; }
+  .sel .radio { border-color: var(--primary); box-shadow: inset 0 0 0 3px var(--tonal), inset 0 0 0 7px var(--primary); }
+  .mode small { display: block; color: var(--muted); font-size: 11px; }
+  .field { border: 1px solid #94a3b8; border-radius: 4px; padding: 14px 10px 6px; font-size: 14px; position: relative; margin-top: 10px; }
+  .field label { position: absolute; top: -7px; left: 8px; background: var(--card); padding: 0 4px; font-size: 11px; color: var(--muted); }
+  .field.pending { border: 2px solid var(--pending); }
+  .field.pending label { color: var(--pending); }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0 12px; }
+  .sw { display: flex; align-items: center; gap: 12px; }
+  .sw .txt { flex: 1; font-size: 13px; }
+  .sw .txt small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .sw .txt.pending > span { color: var(--pending); }
+  .toggle { width: 36px; height: 20px; border-radius: 10px; background: #cbd5e1; position: relative; flex: none; }
+  .toggle::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
+  .toggle.on { background: var(--primary); }
+  .toggle.on::after { left: 19px; }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; max-width: 760px; margin-top: 28px; }
+  .step { background: var(--card); border-radius: 8px; padding: 8px 10px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .arrow { color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>Link pass ("Opened from a link")</h1>
+<p class="lead">New section at the bottom of every restricted app's card, below its mode and fields (specs/link-pass.md).
+Off by default. Turning it on or making it longer is a loosening, so Save asks for the confirmation wait.</p>
+
+<div class="row">
+  <div class="col">
+    <div class="frame"><div class="card">
+      <div class="head"><div class="icon"></div><div><div class="title">Instagram</div><div class="sum">Time limit · 10 s · 5 min</div></div></div>
+      <div class="h2">When I open Instagram</div>
+      <div class="mode"><div class="radio"></div><div>Pause only<small>Wait, then use it freely</small></div></div>
+      <div class="mode sel"><div class="radio"></div><div>Time limit<small>Wait, then get 5 min, then it closes</small></div></div>
+      <div class="mode"><div class="radio"></div><div>Pick your time<small>Wait, then choose how long each visit lasts</small></div></div>
+      <div class="field"><label>Wait when opening (seconds)</label>10</div>
+      <hr>
+      <div class="h2" style="margin-top:0">Opened from a link</div>
+      <div class="sw"><div class="txt"><span>Skip the wait for links</span><small>When another app opens Instagram (a link or a share), skip the wait and choose how long to stay, up to the limit below. After that, the usual wait.</small></div><div class="toggle"></div></div>
+    </div></div>
+    <div class="cap">Off (default). Fields above are trimmed for the demo.</div>
+  </div>
+
+  <div class="col">
+    <div class="frame"><div class="card">
+      <div class="head"><div class="icon"></div><div><div class="title">Instagram</div><div class="sum">Time limit · 10 s · 5 min <b>· links ≤ 10 min</b></div></div></div>
+      <div class="h2">When I open Instagram</div>
+      <div class="mode sel"><div class="radio"></div><div>Time limit<small>Wait, then get 5 min, then it closes</small></div></div>
+      <hr>
+      <div class="h2" style="margin-top:0">Opened from a link</div>
+      <div class="sw"><div class="txt pending"><span>Skip the wait for links</span><small>When another app opens Instagram (a link or a share), skip the wait and choose how long to stay, up to the limit below. After that, the usual wait.</small></div><div class="toggle on"></div></div>
+      <div class="field pending"><label>Longest link visit (minutes)</label>10</div>
+    </div></div>
+    <div class="cap">On, unsaved (pending colour). The minutes field appears only when the switch is on; range 1–90, default 10.</div>
+  </div>
+</div>
+
+<div class="flow">
+  <div class="step">Tap a reel link in WhatsApp</div><span class="arrow">→</span>
+  <div class="step">No wait: "a link opened Instagram. how long do you need?" (1–10 min)</div><span class="arrow">→</span>
+  <div class="step">Pick 3 min → Instagram</div><span class="arrow">→</span>
+  <div class="step">Last 10 s: warning pill</div><span class="arrow">→</span>
+  <div class="step">Normal block screen (10 s wait, then Time limit 5 min)</div>
+</div>
+<div class="flow">
+  <div class="step">Launcher icon / notification</div><span class="arrow">→</span>
+  <div class="step">Normal block screen, as today</div>
+</div>
+</body>
+</html>

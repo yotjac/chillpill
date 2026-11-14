@@ -95,11 +95,16 @@ class EngineHarness(
         now += ms
     }
 
-    fun window(pkg: String, kind: WindowKind = WindowKind.APP, at: Long = now, className: String? = null) =
-        send(Input.Window(pkg, className, kind, at))
+    fun window(
+        pkg: String,
+        kind: WindowKind = WindowKind.APP,
+        at: Long = now,
+        className: String? = null,
+        home: Boolean = false
+    ) = send(Input.Window(pkg, className, kind, at, home))
 
     fun app(pkg: String) = window(pkg)
-    fun home() = window(L)
+    fun home() = window(L, home = true)
     fun shade() = window("com.android.systemui", WindowKind.SYSTEM_OVERLAY)
     /** A dialog / bottom sheet / popup / toast window of [pkg] (not one of its activities). */
     fun popup(pkg: String) = window(pkg, WindowKind.APP_OVERLAY, className = "android.app.Dialog")

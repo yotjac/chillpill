@@ -86,6 +86,27 @@ class RestrictionReducingTest {
 
     // ---- draft -------------------------------------------------------------------------------
 
+    @Test fun linkPass() {
+        val on = limit.copy(linkPass = true, linkPassMinutes = 2)
+        assertTrue(isPolicyLooser(limit, on))
+        assertFalse(isPolicyLooser(on, limit))
+        assertTrue(isPolicyLooser(on, on.copy(linkPassMinutes = 3)))
+        assertFalse(isPolicyLooser(on, on.copy(linkPassMinutes = 1)))
+        // Minutes of a pass that stays off do not matter.
+        assertFalse(isPolicyLooser(limit, limit.copy(linkPassMinutes = 30)))
+        assertTrue(reducing(overrides = mapOf("b" to pause.copy(linkPass = true))))
+    }
+
+    @Test fun draft_linkMinutes() {
+        val d = PolicyDraft.of(limit).copy(linkPass = true, linkMinutes = "99")
+        assertFalse(d.isValid(PolicyField.LINK_MINUTES))
+        val p = d.toPolicy(limit)
+        assertTrue(p.linkPass)
+        assertEquals(AppPolicy.DEFAULT_LINK_PASS_MINUTES, p.linkPassMinutes)
+        assertEquals(7, d.withText(PolicyField.LINK_MINUTES, "7").toPolicy(limit).linkPassMinutes)
+        assertFalse(PolicyField.LINK_MINUTES in Mode.values().flatMap { PolicyDraft.fields(it) })
+    }
+
     @Test fun draft_invalidFieldsFallBack() {
         val d = PolicyDraft.of(limit).withText(PolicyField.OPEN_WAIT, "").withText(PolicyField.MINUTES, "99999")
         assertEquals(limit, d.toPolicy(limit))

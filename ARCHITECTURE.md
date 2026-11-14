@@ -34,6 +34,7 @@ Key concepts:
 | **Wait when time's up** | Seconds on the re-intervention screen (Time limit / Pick your time), independent of the opening wait |
 | **Grace period** | Pause only: free re-entry window. Time limit: time allowed. Pick your time: the length picked (1–90 min). Range 1–1440 min |
 | **Re-intervention** | A second block shown when the grace period expires while the user is still in a Time limit / Pick your time app (Pick: the picker comes back after the wait) |
+| **Link pass** | Per app, off by default (`specs/link-pass.md`): when another app opens a restricted app (a link, a share), skip the wait and show the *link picker* ("how long do you need?", 1 min up to the app's longest link visit, default 10, max 90; only up to 2 min, with a note, if a link visit of that app started in the last 15 min); when the picked time runs out, the normal block |
 | **Confirmation wait** | Global wait before saving looser settings (default 10 s; lowering it is itself looser) |
 | **Grace-expiry warning** | A small non-modal pill shown over the app for the last 10 s of a grace period, only for apps that get stopped (not Pause only). It offers one "+10 s" extension per grace window (unless the app's policy turns that off) and can be tapped away. Whenever that first warning is not showing (extension spent, tapped away), a countdown-only warning that cannot be dismissed appears for the last 5 s |
 | **Suggestion popup** | A dialog shown when a non-restricted, non-excluded app is opened and has accumulated >30 min of foreground time in the last 12 h (cumulative, not a single sitting); offers to restrict it |
@@ -132,6 +133,7 @@ app/src/test/java/com/chillpill/service/engine/   JVM tests: EngineCoreTest (sce
 app/src/test/java/com/chillpill/ui/settings/RestrictionReducingTest.kt   JVM unit tests for isRestrictionReducing / isPolicyLooser / PolicyDraft
 app/src/test/java/com/chillpill/data/restricted/AppPolicyTest.kt         JVM unit tests for AppPolicy codec + legacy resolution
 app/src/test/java/com/chillpill/service/engine/PerAppModesTest.kt        Engine scenarios for the three modes
+app/src/test/java/com/chillpill/service/engine/LinkPassTest.kt           Engine scenarios for link passes (L1, L2)
 │
 └── ui/
     ├── appblock/
@@ -244,7 +246,7 @@ repository properties. No Hilt, Dagger, or Koin.
 ### 5.2 RestrictedAppsRepository (DataStore)
 
 - **Store name:** `"restricted_apps"`
-- **Keys:** `package_names` (String Set), `policy_overrides` (String, JSON map package → `AppPolicy`; only policies that differ from the fixed `AppPolicy.DEFAULT` = Time limit, 10 s / 10 s, 5 min; apps not in it get the default). Legacy, read only: `re_intervention_disabled`. **Legacy fallback (no migration write):** while `policy_overrides` is absent and any legacy key exists, every restricted app keeps its old behaviour (`TIME_LIMIT`, opening and time's-up wait = `wait_time_seconds` or 12, minutes = `grace_period_minutes` or 5; `PAUSE_ONLY` if in `re_intervention_disabled`). The first Save writes `policy_overrides`; the legacy keys stay for one release.
+- **Keys:** `package_names` (String Set), `policy_overrides` (String, JSON map package → `AppPolicy`; only policies that differ from the fixed `AppPolicy.DEFAULT` = Time limit, 10 s / 10 s, 5 min; apps not in it get the default). Each policy also carries `linkPass` / `linkMinutes` (missing = off / 2, so older stored policies decode unchanged). Legacy, read only: `re_intervention_disabled`. **Legacy fallback (no migration write):** while `policy_overrides` is absent and any legacy key exists, every restricted app keeps its old behaviour (`TIME_LIMIT`, opening and time's-up wait = `wait_time_seconds` or 12, minutes = `grace_period_minutes` or 5; `PAUSE_ONLY` if in `re_intervention_disabled`). The first Save writes `policy_overrides`; the legacy keys stay for one release.
 - **Exposed flows:** `restrictedPackages: Flow<Set<String>>`, `snapshot: Flow<RestrictedAppsSnapshot>` (restricted set + stored overrides + legacy set from one read)
 - **Write methods:** `setRestricted` (setup flow), `setRestrictedWithOverrides` (Settings Save; drops overrides of unrestricted apps), `addRestricted` (suggestion popup; the app gets the default policy)
 - **`ChillpillApp.restrictions`** combines this snapshot with the legacy keys from the settings into `Restrictions` (restricted set, resolved overrides): `policyFor(pkg)` for the block screens, `config()` for the engine. `AppPolicy.toRule()` is what the engine sees (`AppRule`: mode, grace, "+10 s" allowed); the waits never reach the engine.
@@ -270,6 +272,7 @@ repository properties. No Hilt, Dagger, or Koin.
 | `GRACE_EXPIRED_WHILE_ACTIVE` | Grace timer ends while user is still in the restricted app |
 | `GRACE_EXPIRED_WHILE_AWAY` | Grace timer ends while user has navigated away |
 | `GRACE_EXTENDED` | User tapped "+10 s" on the grace-expiry warning pill |
+| `LINK_PASS` | A restricted app opened from another app was let in without a wait (link pass) |
 
 **Key DAO queries** (`UsageEventsDao`):
 - `getEventsSince(packageName, since)` → `Flow<List<UsageEvent>>`
@@ -375,6 +378,14 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
 - Entering a restricted app: grace valid → allow; PAUSE_ONLY app back within 10 s → allow;
   otherwise block. Leaving never moves a deadline (I5). Grace expiry: PAUSE_ONLY → `graceOver`,
   session stays; TIME_LIMIT / PICK app in front → re-intervention; away → Idle.
+- **Link pass (L1 / L2, `specs/link-pass.md`):** an entry seen through a window event, that would
+  otherwise block (E2 / E8), whose previous presence was another app's activity (`APP`, not a
+  home app: `Input.Window.home` / `ProbeResult.home` → `Presence.home`, screen on) with no SystemUI
+  window after its last activity window event, shows the **link picker** instead
+  (`Blocking(LINK)`, `ShowBlock(LINK, linkMaxMs, linkLimited)`, no wait; L3: capped at 2 min when
+  a link visit of the app started < 15 min ago, `lastLinkPassAt`). Continue on it (A2b) starts `Session(linkPass = true)` for the picked
+  length clamped to 1 min … `linkPassMs`. It runs out like Time limit, except that in front it shows the **initial** block (L2), whatever
+  the mode. Probe-made entries, home apps, the shade and our own UI never qualify.
 - **Block screen lifecycle:** the activity reports `BlockStarted/Stopped/Closed` with an instance id
   (from `AppBlockViewModel.instance`). The app's own window events in the first 2 s after its block
   appears (splash → main) are absorbed. Getting past the block (shade → notification, recents,
@@ -399,7 +410,8 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
   `nextWakeUp`. A late wake-up (deep sleep) is harmless: the next input processes overdue deadlines
   first, with the same outcome.
 - Also owns the `WindowClassifier` (with the IME-package cache and the cached
-  `isActivityOf` lookup: true / false / null = package not visible).
+  `isActivityOf` lookup: true / false / null = package not visible), and `isHomePackage` (cached
+  `MAIN` + `HOME` candidates) that the accessibility service and probes put on their inputs.
 - **Trace:** every input and effect is appended as JSON lines to `filesDir/trace/trace-{0,1}.jsonl`
   (`EngineTrace`, 512 KB rotation). Pull with
   `adb exec-out run-as com.chillpillapp cat files/trace/trace-0.jsonl`; drop it into
@@ -465,7 +477,7 @@ All in-app navigation happens via a single `NavHost` in `MainActivity`:
 **Transitions:** Horizontal slide, 300 ms.
 
 `AppBlockActivity` is a **separate Activity** (not part of the NavHost) launched by the
-session engine for the **initial** block via Intent with `EXTRA_PACKAGE_NAME` and `EXTRA_IS_RE_INTERVENTION`.
+session engine for the **initial** block via Intent with `EXTRA_PACKAGE_NAME` and `EXTRA_IS_RE_INTERVENTION`, and for the **link picker** with `EXTRA_IS_LINK`, `EXTRA_LINK_MAX_MINUTES`, `EXTRA_LINK_LIMITED` (no wait, picker limited to what the engine allows; a note when capped for a repeat link).
 
 `ReInterventionActivity` is another **separate Activity** used for **re-intervention** (when the grace period
 expires while the user is still in the app; returning after grace expired shows the regular block). It has a distinct UI:
@@ -488,7 +500,7 @@ the popup can't be displaced by the target app's rapid activity/window changes.
 | `SettingsViewModel` | `overrideDrafts` (`PolicyDraft` per app edited in this session; others show their saved policy), `confirmationWaitInput`, originals of each, `restrictedAppsInfo`, `installedApps`, `appSearchQuery`, `hasChanges`, `showConfirmationScreen`, `confirmationProgress`, `confirmationPhase` | Draft-only state (when `draftOnly=true`); policy editors address their app by `pkg`; Save stores only policies that differ from `AppPolicy.DEFAULT`; load/sort installed apps; persist only on Save; run confirmation timer when saving restriction-reducing changes |
 | `SettingsViewModel` (extended) | `expandedAppPackage`, `blockBackground`, `customBackgroundFileName`, `backgroundImportFailed` | Track which restricted app card is expanded. When `draftOnly=false` (e.g. Setup flow's app selection), restricted-app changes persist immediately (the restricted set only). |
 | `StatisticsViewModel` | `selectedRange`, `stats: List<AppStatistic>`, `isLoading`, `focusedSeries` | Aggregate daily stats into buckets, auto-refresh every 15 s, legend focus |
-| `AppBlockViewModel` | `phase` (WAITING/COMPLETED), `progress` (0→1), `openCount24h`, `blockBackground` (nullable until read), `isPick`, `instant` (0-s wait), `pickMinutes`, `pickExtended` | Run the app's wait (opening, or time's up on a re-intervention), hold the picker state, expose the chosen background, emit one-shot events (`RequestFinish`, `RequestGoHome`) via Channel; report Continue (with the picked length) / close / start / stop to the session engine under a per-block `instance` id |
+| `AppBlockViewModel` | `phase` (WAITING/COMPLETED), `progress` (0→1), `openCount24h`, `blockBackground` (nullable until read), `isPick`, `instant` (0-s wait), `pickMinutes`, `pickExtended`, `pickLimit` (link picker only) | Run the app's wait (none for a link picker) (opening, or time's up on a re-intervention), hold the picker state, expose the chosen background, emit one-shot events (`RequestFinish`, `RequestGoHome`) via Channel; report Continue (with the picked length) / close / start / stop to the session engine under a per-block `instance` id |
 
 All ViewModels expose state via `StateFlow` and screens collect it with
 `collectAsStateWithLifecycle`.
@@ -501,7 +513,7 @@ All ViewModels expose state via `StateFlow` and screens collect it with
 - **Restricted apps** section on `SettingsScreen` shows each restricted app as an expandable `Card` with the app icon, label, a one-line policy summary (e.g. "Time limit · 12 s · 5 min") and an always-visible delete icon in the header row.
 - The entire card header is tappable and includes a chevron icon to indicate that it can expand for additional settings; only one app card is expanded at a time.
 - Expanding a card reveals the app's `PolicyEditor` (its saved policy, or the default) on a plain surface so it stays readable on a pending-tinted card (draft only until Save).
-- `PolicyEditor` ("When I open {app}"): three selectable mode rows, then only the selected mode's fields (`PolicyDraft.fields`): Pause only — wait when opening, free re-entry; Time limit — wait when opening, time allowed, wait when time's up, "+10 s" switch; Pick your time — wait when opening (0 allowed), wait before picking again, "+10 s" switch. Leaving Pick with a 0-s wait makes it 1 s.
+- `PolicyEditor` ("When I open {app}"): three selectable mode rows, then only the selected mode's fields (`PolicyDraft.fields`): Pause only — wait when opening, free re-entry; Time limit — wait when opening, time allowed, wait when time's up, "+10 s" switch; Pick your time — wait when opening (0 allowed), wait before picking again, "+10 s" switch. Leaving Pick with a 0-s wait makes it 1 s. Below that, for every mode, "Opened from a link": a "Skip the wait for links" switch and, when on, "Longest link visit (minutes)" (1–90, default 10). Turning it on or lengthening it is looser (`isPolicyLooser`). The collapsed summary then ends in "· links ≤ N min".
 
 ### 7.4 Theme
 
@@ -542,7 +554,7 @@ property stops working once the app targets API 37 — adaptive layouts have to 
 next target bump (`specs/target-sdk-36.md`, D3).
 
 The manifest also declares a `<queries>` block for launcher intents (used to list
-installed apps).
+installed apps), input methods, and `MAIN` + `HOME` (home apps, for the link pass).
 
 ---
 

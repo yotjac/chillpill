@@ -3,6 +3,7 @@ package com.chillpill.data.restricted
 import com.chillpill.service.engine.AppRule
 import com.chillpill.service.engine.Mode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -78,5 +79,18 @@ class AppPolicyTest {
         assertEquals(12, PolicyResolver.confirmationWaitSeconds(null, null, setupCompleted = true))
         assertEquals(10, PolicyResolver.confirmationWaitSeconds(null, null, setupCompleted = false))
         assertEquals(3, PolicyResolver.confirmationWaitSeconds(3, legacyWaitSeconds = 20, setupCompleted = true))
+    }
+
+    @Test fun linkPass_codecRuleAndDefaults() {
+        assertFalse(AppPolicy.DEFAULT.linkPass)
+        assertNull(AppPolicy.DEFAULT.toRule().linkPassMs)
+        val p = AppPolicy(linkPass = true, linkPassMinutes = 3)
+        assertEquals(p, AppPolicyCodec.decode(AppPolicyCodec.encode(p)))
+        assertEquals(3 * 60_000L, p.toRule().linkPassMs)
+        // Stored before link passes: off, default length.
+        val old = AppPolicyCodec.decode("""{"mode":"PICK","openWait":0,"timesUpWait":5,"minutes":5,"extension":false}""")!!
+        assertFalse(old.linkPass)
+        assertEquals(AppPolicy.DEFAULT_LINK_PASS_MINUTES, old.linkPassMinutes)
+        assertEquals(90, AppPolicyCodec.decode("""{"linkPass":true,"linkMinutes":500}""")!!.linkPassMinutes)
     }
 }

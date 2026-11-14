@@ -199,7 +199,7 @@ class SessionEngine(private val app: ChillpillApp) {
 
     private fun execute(effect: Effect) {
         when (effect) {
-            is Effect.ShowBlock -> showBlock(effect.pkg, effect.kind)
+            is Effect.ShowBlock -> showBlock(effect)
             is Effect.RecordUsage -> io.launch {
                 val sessionStart = if (effect.kind == UsageKind.WAIT_COMPLETED) System.currentTimeMillis() else null
                 app.usageEventsRepository.recordEvent(effect.pkg, effect.kind.eventType(), sessionStart)
@@ -214,7 +214,8 @@ class SessionEngine(private val app: ChillpillApp) {
                             kind = classifier.classify(it.packageName, null),
                             resumedAt = wallToElapsed(it.resumedAtWallMs),
                             queriedAt = queriedAt,
-                            onlyResumed = it.onlyResumed
+                            onlyResumed = it.onlyResumed,
+                            home = isHomePackage(it.packageName)
                         )
                     }
                 } catch (t: Throwable) {
@@ -233,7 +234,9 @@ class SessionEngine(private val app: ChillpillApp) {
         }
     }
 
-    private fun showBlock(pkg: String, kind: BlockKind) {
+    private fun showBlock(effect: Effect.ShowBlock) {
+        val pkg = effect.pkg
+        val kind = effect.kind
         try {
             val activity = if (kind == BlockKind.RE_INTERVENTION) ReInterventionActivity::class.java else AppBlockActivity::class.java
             val intent = Intent(app, activity).apply {
@@ -241,6 +244,9 @@ class SessionEngine(private val app: ChillpillApp) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_HISTORY)
                 putExtra(AppBlockActivity.EXTRA_PACKAGE_NAME, pkg)
                 putExtra(AppBlockActivity.EXTRA_IS_RE_INTERVENTION, kind == BlockKind.RE_INTERVENTION)
+                putExtra(AppBlockActivity.EXTRA_IS_LINK, kind == BlockKind.LINK)
+                effect.linkMaxMs?.let { putExtra(AppBlockActivity.EXTRA_LINK_MAX_MINUTES, (it / 60_000L).toInt()) }
+                putExtra(AppBlockActivity.EXTRA_LINK_LIMITED, effect.linkLimited)
             }
             app.startActivity(intent)
         } catch (t: Throwable) {
@@ -274,6 +280,32 @@ class SessionEngine(private val app: ChillpillApp) {
             imePackagesLoadedAt = now
         }
         return imePackages
+    }
+
+    private var homePackages: Set<String> = emptySet()
+    private var homePackagesLoadedAt = 0L
+
+    /**
+     * Whether [pkg] is a home app (any `MAIN` + `HOME` candidate, the default launcher and the
+     * system's recents provider included). An app opened from one is never a link pass (L1,
+     * specs/link-pass.md). Visible through the HOME intent in the manifest's `<queries>`.
+     */
+    @Synchronized
+    fun isHomePackage(pkg: String): Boolean {
+        val now = now()
+        if (homePackagesLoadedAt == 0L || now - homePackagesLoadedAt > HOME_CACHE_MS) {
+            homePackages = try {
+                val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+                app.packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+                    .mapNotNull { it.activityInfo?.packageName }
+                    .toSet()
+            } catch (t: Throwable) {
+                Log.e(TAG, "reading home apps failed", t)
+                emptySet()
+            }
+            homePackagesLoadedAt = now
+        }
+        return pkg in homePackages
     }
 
     /**
@@ -318,6 +350,7 @@ class SessionEngine(private val app: ChillpillApp) {
         private const val TRACE_FLUSH_MS = 2_000L
         private const val IME_CACHE_MS = 5L * 60L * 1000L
         private const val LOOKUP_CACHE_MS = 5L * 60L * 1000L
+        private const val HOME_CACHE_MS = 5L * 60L * 1000L
         private const val CONFIG_RETRY_MS = 1_000L
 
         fun now(): Long = SystemClock.elapsedRealtime()
@@ -336,6 +369,7 @@ class SessionEngine(private val app: ChillpillApp) {
             UsageKind.GRACE_EXPIRED_WHILE_ACTIVE -> UsageEventType.GRACE_EXPIRED_WHILE_ACTIVE
             UsageKind.GRACE_EXPIRED_WHILE_AWAY -> UsageEventType.GRACE_EXPIRED_WHILE_AWAY
             UsageKind.GRACE_EXTENDED -> UsageEventType.GRACE_EXTENDED
+            UsageKind.LINK_PASS -> UsageEventType.LINK_PASS
         }
     }
 }

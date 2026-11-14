@@ -332,6 +332,10 @@ class SettingsViewModel(
     fun onPolicyExtensionToggled(pkg: String, allowed: Boolean) =
         updateDraft(pkg) { it.copy(extensionAllowed = allowed) }
 
+    /** "Skip the wait for links" (specs/link-pass.md). */
+    fun onPolicyLinkPassToggled(pkg: String, enabled: Boolean) =
+        updateDraft(pkg) { it.copy(linkPass = enabled) }
+
     /** Digits only; above the maximum snaps to the maximum (below the minimum waits for focus loss). */
     fun onPolicyFieldChanged(pkg: String, field: PolicyField, text: String) = updateDraft(pkg) { draft ->
         val digits = text.filter { it.isDigit() }.take(6)

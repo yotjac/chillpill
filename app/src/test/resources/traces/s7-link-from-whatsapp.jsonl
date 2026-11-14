@@ -1,0 +1,24 @@
+{"k":"in","type":"ConfigChanged","wall":1794571049808,"v":{"at":1263655302,"config":{"defaultRule":{"extensionAllowed":true,"graceMs":300000,"mode":"TIME_LIMIT"},"rules":{"com.mobirix.swipebrick2":{"extensionAllowed":true,"graceMs":180000,"mode":"PAUSE_ONLY"},"com.instagram.android":{"extensionAllowed":true,"graceMs":180000,"linkPassMs":120000,"mode":"TIME_LIMIT"},"com.twitter.android":{"extensionAllowed":true,"graceMs":180000,"linkPassMs":240000,"mode":"PICK"},"app.revanced.android.youtube":{"extensionAllowed":true,"graceMs":300000,"mode":"PICK"}}}}}
+{"k":"in","type":"Window","wall":1794571050387,"v":{"at":1263655880,"className":"com.google.android.apps.nexuslauncher.NexusLauncherActivity","home":true,"kind":"APP","pkg":"com.google.android.apps.nexuslauncher"}}
+{"k":"fx","at":1263655880,"v":["EvaluateSuggestion(pkg=com.google.android.apps.nexuslauncher)"]}
+{"k":"in","type":"Window","wall":1794571050995,"v":{"at":1263656487,"className":"com.google.android.apps.nexuslauncher.NexusLauncherActivity","home":true,"kind":"APP","pkg":"com.google.android.apps.nexuslauncher"}}
+{"k":"in","type":"Window","wall":1794571051079,"v":{"at":1263656570,"className":"com.google.android.apps.nexuslauncher.NexusLauncherActivity","home":true,"kind":"APP","pkg":"com.google.android.apps.nexuslauncher"}}
+{"k":"in","type":"Window","wall":1794571051264,"v":{"at":1263656755,"className":"com.whatsapp.Conversation","home":false,"kind":"APP","pkg":"com.whatsapp"}}
+{"k":"fx","at":1263656755,"v":["EvaluateSuggestion(pkg=com.whatsapp)"]}
+{"k":"in","type":"Window","wall":1794571051479,"v":{"at":1263656971,"className":"com.whatsapp.Conversation","home":false,"kind":"APP","pkg":"com.whatsapp"}}
+{"k":"in","type":"Window","wall":1794571052100,"v":{"at":1263657590,"className":"android.widget.FrameLayout","home":false,"kind":"SYSTEM_OVERLAY","pkg":"com.android.systemui"}}
+{"k":"in","type":"Window","wall":1794571057559,"v":{"at":1263663050,"className":"com.whatsapp.mediaview.MediaViewActivity","home":false,"kind":"APP","pkg":"com.whatsapp"}}
+{"k":"in","type":"Window","wall":1794571085491,"v":{"at":1263690979,"className":"android.view.View","home":false,"kind":"SYSTEM_OVERLAY","pkg":"com.android.systemui"}}
+{"k":"in","type":"Window","wall":1794571085967,"v":{"at":1263691459,"className":"com.whatsapp.Conversation","home":false,"kind":"APP","pkg":"com.whatsapp"}}
+{"k":"in","type":"Window","wall":1794571088096,"v":{"at":1263693581,"className":"android.view.View","home":false,"kind":"SYSTEM_OVERLAY","pkg":"com.android.systemui"}}
+{"k":"in","type":"Window","wall":1794571088186,"v":{"at":1263693676,"className":"android.widget.FrameLayout","home":false,"kind":"APP_OVERLAY","pkg":"com.whatsapp"}}
+{"k":"in","type":"Window","wall":1794571088215,"v":{"at":1263693706,"className":"com.whatsapp.home.ui.HomeActivity","home":false,"kind":"APP","pkg":"com.whatsapp"}}
+{"k":"in","type":"Window","wall":1794571088286,"v":{"at":1263693776,"className":"com.whatsapp.home.ui.HomeActivity","home":false,"kind":"APP","pkg":"com.whatsapp"}}
+{"k":"in","type":"Window","wall":1794571093955,"v":{"at":1263699447,"className":"com.whatsapp.Conversation","home":false,"kind":"APP","pkg":"com.whatsapp"}}
+{"k":"in","type":"Window","wall":1794571094082,"v":{"at":1263699575,"className":"com.whatsapp.Conversation","home":false,"kind":"APP","pkg":"com.whatsapp"}}
+{"k":"in","type":"Window","wall":1794571094462,"v":{"at":1263699952,"className":"android.widget.FrameLayout","home":false,"kind":"APP_OVERLAY","pkg":"com.whatsapp"}}
+{"k":"in","type":"Window","wall":1794571097317,"v":{"at":1263702809,"className":"android.widget.FrameLayout","home":false,"kind":"APP_OVERLAY","pkg":"com.twitter.android"}}
+{"k":"in","type":"Window","wall":1794571097322,"v":{"at":1263702814,"className":"android.widget.ImageView","home":false,"kind":"APP_OVERLAY","pkg":"com.twitter.android"}}
+{"k":"in","type":"Window","wall":1794571097602,"v":{"at":1263703094,"className":"com.x.android.main.MainActivity","home":false,"kind":"APP","pkg":"com.twitter.android"}}
+{"k":"fx","at":1263703094,"v":["ShowBlock(pkg=com.twitter.android, kind=INITIAL)","RecordUsage(pkg=com.twitter.android, kind=OPEN_ATTEMPT)"]}
+{"k":"in","type":"Window","wall":1794571097628,"v":{"at":1263703119,"className":"android.widget.FrameLayout","home":false,"kind":"OWN_OVERLAY","pkg":"com.chillpillapp"}}

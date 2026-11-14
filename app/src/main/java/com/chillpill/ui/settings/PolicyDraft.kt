@@ -10,7 +10,11 @@ import com.chillpill.service.engine.Mode
  */
 
 /** The number fields of a policy editor. */
-enum class PolicyField { OPEN_WAIT, TIMES_UP_WAIT, MINUTES }
+enum class PolicyField {
+    OPEN_WAIT, TIMES_UP_WAIT, MINUTES,
+    /** Length of a link pass; shown in its own section, not in [PolicyDraft.fields]. */
+    LINK_MINUTES
+}
 
 /**
  * An [AppPolicy] as edited: number fields are text, so they can be empty or out of range while
@@ -21,18 +25,22 @@ data class PolicyDraft(
     val openWait: String,
     val timesUpWait: String,
     val minutes: String,
-    val extensionAllowed: Boolean
+    val extensionAllowed: Boolean,
+    val linkPass: Boolean = false,
+    val linkMinutes: String = AppPolicy.DEFAULT_LINK_PASS_MINUTES.toString()
 ) {
     fun text(field: PolicyField): String = when (field) {
         PolicyField.OPEN_WAIT -> openWait
         PolicyField.TIMES_UP_WAIT -> timesUpWait
         PolicyField.MINUTES -> minutes
+        PolicyField.LINK_MINUTES -> linkMinutes
     }
 
     fun withText(field: PolicyField, text: String): PolicyDraft = when (field) {
         PolicyField.OPEN_WAIT -> copy(openWait = text)
         PolicyField.TIMES_UP_WAIT -> copy(timesUpWait = text)
         PolicyField.MINUTES -> copy(minutes = text)
+        PolicyField.LINK_MINUTES -> copy(linkMinutes = text)
     }
 
     /** Only PICK may open without waiting: leaving it with a 0-s wait makes the wait 1 s. */
@@ -56,7 +64,9 @@ data class PolicyDraft(
         openWaitSeconds = value(PolicyField.OPEN_WAIT, fallback),
         timesUpWaitSeconds = value(PolicyField.TIMES_UP_WAIT, fallback),
         minutes = value(PolicyField.MINUTES, fallback),
-        extensionAllowed = extensionAllowed
+        extensionAllowed = extensionAllowed,
+        linkPass = linkPass,
+        linkPassMinutes = value(PolicyField.LINK_MINUTES, fallback)
     ).sanitized()
 
     companion object {
@@ -65,19 +75,23 @@ data class PolicyDraft(
             openWait = p.openWaitSeconds.toString(),
             timesUpWait = p.timesUpWaitSeconds.toString(),
             minutes = p.minutes.toString(),
-            extensionAllowed = p.extensionAllowed
+            extensionAllowed = p.extensionAllowed,
+            linkPass = p.linkPass,
+            linkMinutes = p.linkPassMinutes.toString()
         )
 
         fun range(field: PolicyField, mode: Mode): IntRange = when (field) {
             PolicyField.OPEN_WAIT -> AppPolicy.minOpenWaitSeconds(mode)..AppPolicy.MAX_WAIT_SECONDS
             PolicyField.TIMES_UP_WAIT -> AppPolicy.MIN_TIMES_UP_WAIT_SECONDS..AppPolicy.MAX_WAIT_SECONDS
             PolicyField.MINUTES -> AppPolicy.MIN_MINUTES..AppPolicy.MAX_MINUTES
+            PolicyField.LINK_MINUTES -> AppPolicy.MIN_LINK_PASS_MINUTES..AppPolicy.MAX_LINK_PASS_MINUTES
         }
 
         fun valueOf(p: AppPolicy, field: PolicyField): Int = when (field) {
             PolicyField.OPEN_WAIT -> p.openWaitSeconds
             PolicyField.TIMES_UP_WAIT -> p.timesUpWaitSeconds
             PolicyField.MINUTES -> p.minutes
+            PolicyField.LINK_MINUTES -> p.linkPassMinutes
         }
 
         /** Which number fields a mode shows. */
@@ -97,11 +111,14 @@ private fun AppPolicy.maxVisitMinutes(): Int? = when (mode) {
 }
 
 /**
- * True when [new] lets the user in sooner or for longer than [old] (specs/per-app-modes.md).
+ * True when [new] lets the user in sooner or for longer than [old] (specs/per-app-modes.md,
+ * specs/link-pass.md).
  * Moving to a stricter mode, or adding friction, is never looser.
  */
 internal fun isPolicyLooser(old: AppPolicy, new: AppPolicy): Boolean {
     if (new.openWaitSeconds < old.openWaitSeconds) return true
+    // A link pass skips the wait: turning it on, or making it longer, lets the user in sooner.
+    if (new.linkPass && (!old.linkPass || new.linkPassMinutes > old.linkPassMinutes)) return true
     val oldMax = old.maxVisitMinutes()
     val newMax = new.maxVisitMinutes()
     return when {

@@ -28,7 +28,12 @@ enum class WindowKind {
     SYSTEM_OVERLAY
 }
 
-enum class BlockKind { INITIAL, RE_INTERVENTION }
+enum class BlockKind {
+    INITIAL,
+    RE_INTERVENTION,
+    /** Opened from a link (L1): no wait, only "how long?" up to the rule's linkPassMs. */
+    LINK
+}
 
 /** Why a block screen closed without the user tapping Continue. */
 enum class CloseReason { GO_HOME, BACK, SYSTEM_GESTURE }
@@ -42,7 +47,9 @@ enum class UsageKind {
     LEFT_APP,
     GRACE_EXPIRED_WHILE_ACTIVE,
     GRACE_EXPIRED_WHILE_AWAY,
-    GRACE_EXTENDED
+    GRACE_EXTENDED,
+    /** Continue on a link picker: let in without a wait (specs/link-pass.md, A2b). */
+    LINK_PASS
 }
 
 /** How Chillpill steps in for a restricted app (specs/per-app-modes.md). */
@@ -61,7 +68,12 @@ data class AppRule(
     /** PAUSE_ONLY: free re-entry window. TIME_LIMIT: time allowed. PICK: unused. */
     val graceMs: Long,
     /** Whether the first warning pill offers "+10 s" (TIME_LIMIT / PICK). */
-    val extensionAllowed: Boolean = true
+    val extensionAllowed: Boolean = true,
+    /**
+     * Opened from another app (a link, a share): skip the wait and let the user pick a visit of
+     * up to this long, then the normal block (specs/link-pass.md). Null = off.
+     */
+    val linkPassMs: Long? = null
 )
 
 data class Config(
@@ -98,7 +110,9 @@ data class Presence(
     val kind: WindowKind?,
     /** When the current value was established (event time). Older signals never override it. */
     val since: Long,
-    val screenOn: Boolean
+    val screenOn: Boolean,
+    /** [pkg] is a home app (launcher). An entry from a home app is never a link (L1). */
+    val home: Boolean = false
 )
 
 /** Per restricted package. No entry in the map means Idle. */
@@ -110,7 +124,11 @@ sealed interface AppState {
         /** Between the activity's onStart and onStop. */
         val uiVisible: Boolean,
         /** Identity of the activity instance currently showing it; null until it reports in. */
-        val instance: Long?
+        val instance: Long?,
+        /** [BlockKind.LINK] only: longest visit the picker allows (L1, already capped for a repeat). */
+        val linkMaxMs: Long? = null,
+        /** [BlockKind.LINK] only: capped because a link visit started < 15 min ago (L3). */
+        val linkLimited: Boolean = false
     ) : AppState
 
     /** The user passed the block and has not been blocked since. */
@@ -128,7 +146,12 @@ sealed interface AppState {
         /** When the user left the app; null exactly while the user is in it (invariant I2). */
         val leftAt: Long? = null,
         /** When the last "+10 s" was accepted (drives the pill's short confirmation). */
-        val extendedAt: Long? = null
+        val extendedAt: Long? = null,
+        /**
+         * A link pass (L1): let in without a wait; when it runs out in the app the normal block
+         * follows (L2), whatever the mode. Never treated as PAUSE_ONLY.
+         */
+        val linkPass: Boolean = false
     ) : AppState
 }
 
@@ -146,13 +169,22 @@ data class ProbeResult(
     /** Just before the lookup ran; what it says is true as of this moment. */
     val queriedAt: Long = 0L,
     /** No other package has a resumed activity (never true in split screen). */
-    val onlyResumed: Boolean = false
+    val onlyResumed: Boolean = false,
+    /** [pkg] is a home app (same default rule as [queriedAt] for old traces). */
+    val home: Boolean = false
 )
 
 sealed interface Input {
     val at: Long
 
-    data class Window(val pkg: String, val className: String?, val kind: WindowKind, override val at: Long) : Input
+    /** [home]: [pkg] is a home app (launcher); false in traces recorded before link passes. */
+    data class Window(
+        val pkg: String,
+        val className: String?,
+        val kind: WindowKind,
+        override val at: Long,
+        val home: Boolean = false
+    ) : Input
     data class ScreenOff(override val at: Long) : Input
     data class ScreenOn(val keyguardLocked: Boolean, override val at: Long) : Input
     data class UserPresent(override val at: Long) : Input
@@ -180,7 +212,13 @@ sealed interface Input {
 }
 
 sealed interface Effect {
-    data class ShowBlock(val pkg: String, val kind: BlockKind) : Effect
+    /** [linkMaxMs] / [linkLimited]: what the link picker offers ([BlockKind.LINK] only). */
+    data class ShowBlock(
+        val pkg: String,
+        val kind: BlockKind,
+        val linkMaxMs: Long? = null,
+        val linkLimited: Boolean = false
+    ) : Effect
     data class RecordUsage(val pkg: String, val kind: UsageKind) : Effect
     /** Run a UsageStats foreground lookup and send back [Input.Probe] with [token]. */
     data class RequestProbe(val token: Long) : Effect

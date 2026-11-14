@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -33,8 +34,9 @@ import com.chillpill.service.engine.Mode
 
 /**
  * Editor for one [AppPolicy] (specs/per-app-modes.md): "When I open {app}" with the three modes,
- * then only the fields the selected mode uses, on each restricted app's card. Values differing from
- * [original] are highlighted as pending, like the rest of Settings.
+ * then only the fields the selected mode uses, then "Opened from a link" (specs/link-pass.md), on
+ * each restricted app's card. Values differing from [original] are highlighted as pending, like
+ * the rest of Settings.
  */
 @Composable
 fun PolicyEditor(
@@ -46,6 +48,7 @@ fun PolicyEditor(
     onFieldChange: (PolicyField, String) -> Unit,
     onFieldFocusLost: (PolicyField) -> Unit,
     onExtensionChange: (Boolean) -> Unit,
+    onLinkPassChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val effective = draft.toPolicy(original)
@@ -95,6 +98,64 @@ fun PolicyEditor(
                 Switch(checked = draft.extensionAllowed, onCheckedChange = onExtensionChange)
             }
         }
+        LinkPassSection(
+            appName = appName,
+            draft = draft,
+            original = original,
+            onLinkPassChange = onLinkPassChange,
+            onFieldChange = onFieldChange,
+            onFieldFocusLost = onFieldFocusLost
+        )
+    }
+}
+
+/** "Opened from a link": skip the wait for links, for how long (specs/link-pass.md). */
+@Composable
+private fun LinkPassSection(
+    appName: String,
+    draft: PolicyDraft,
+    original: AppPolicy,
+    onLinkPassChange: (Boolean) -> Unit,
+    onFieldChange: (PolicyField, String) -> Unit,
+    onFieldFocusLost: (PolicyField) -> Unit
+) {
+    HorizontalDivider(modifier = Modifier.padding(top = 16.dp, bottom = 12.dp))
+    Text(
+        text = stringResource(R.string.policy_link_title),
+        style = MaterialTheme.typography.titleSmall
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val pending = draft.linkPass != original.linkPass
+        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(
+                text = stringResource(R.string.policy_link_switch),
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (pending) PendingWaitLabelColor else Color.Unspecified
+            )
+            Text(
+                text = stringResource(R.string.policy_link_description, appName),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = draft.linkPass, onCheckedChange = onLinkPassChange)
+    }
+    if (draft.linkPass) {
+        val field = PolicyField.LINK_MINUTES
+        Spacer(modifier = Modifier.height(10.dp))
+        PolicyNumberField(
+            label = fieldLabel(field, draft.mode),
+            text = draft.text(field),
+            isError = !draft.isValid(field),
+            pending = draft.isValid(field) && draft.text(field).toInt() != PolicyDraft.valueOf(original, field),
+            onValueChange = { onFieldChange(field, it) },
+            onFocusLost = { onFieldFocusLost(field) }
+        )
     }
 }
 
@@ -143,6 +204,7 @@ fun modeName(mode: Mode): String = when (mode) {
 @Composable
 private fun fieldLabel(field: PolicyField, mode: Mode): String = when (field) {
     PolicyField.OPEN_WAIT -> stringResource(R.string.policy_open_wait)
+    PolicyField.LINK_MINUTES -> stringResource(R.string.policy_link_minutes)
     PolicyField.MINUTES -> if (mode == Mode.PAUSE_ONLY) {
         stringResource(R.string.policy_free_reentry)
     } else {
@@ -196,9 +258,22 @@ fun PolicyNumberField(
     )
 }
 
-/** One-line description of a policy for a collapsed app card, e.g. "Time limit · 12 s · 5 min". */
+/**
+ * One-line description of a policy for a collapsed app card, e.g. "Time limit · 12 s · 5 min",
+ * with " · links 2 min" when it has a link pass.
+ */
 @Composable
-fun policySummary(policy: AppPolicy): String = when (policy.mode) {
+fun policySummary(policy: AppPolicy): String {
+    val base = modeSummary(policy)
+    return if (policy.linkPass) {
+        stringResource(R.string.policy_summary_link_suffix, base, policy.linkPassMinutes)
+    } else {
+        base
+    }
+}
+
+@Composable
+private fun modeSummary(policy: AppPolicy): String = when (policy.mode) {
     Mode.PAUSE_ONLY -> stringResource(
         R.string.policy_summary_pause, modeName(policy.mode), policy.openWaitSeconds, policy.minutes
     )

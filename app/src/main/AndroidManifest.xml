@@ -12,6 +12,12 @@
         <intent>
             <action android:name="android.view.InputMethod" />
         </intent>
+        <!-- Home apps (launchers, the system recents provider): an app opened from one of them
+             never gets a link pass (specs/link-pass.md). -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
     </queries>
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

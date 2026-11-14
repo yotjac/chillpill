@@ -43,7 +43,12 @@ class AppBlockActivity : ComponentActivity() {
                     }
                 val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
                 val isReIntervention = intent.getBooleanExtra(EXTRA_IS_RE_INTERVENTION, false)
-                return AppBlockViewModel(app, packageName, isReIntervention) as T
+                val isLink = intent.getBooleanExtra(EXTRA_IS_LINK, false)
+                return AppBlockViewModel(
+                    app, packageName, isReIntervention, isLink,
+                    linkMaxMinutes = intent.getIntExtra(EXTRA_LINK_MAX_MINUTES, 0),
+                    linkLimited = intent.getBooleanExtra(EXTRA_LINK_LIMITED, false)
+                ) as T
             }
         }
     }
@@ -196,5 +201,11 @@ class AppBlockActivity : ComponentActivity() {
         const val EXTRA_PACKAGE_NAME = "packageName"
         const val EXTRA_CLASS_NAME = "className"
         const val EXTRA_IS_RE_INTERVENTION = "isReIntervention"
+        /** Opened from a link (specs/link-pass.md): no wait, only "how long?" up to the app's limit. */
+        const val EXTRA_IS_LINK = "isLink"
+        /** Link picker: its maximum in minutes, as the engine decided (capped for a repeat link). */
+        const val EXTRA_LINK_MAX_MINUTES = "linkMaxMinutes"
+        /** Link picker: capped because a link was opened in the last 15 min (shows why). */
+        const val EXTRA_LINK_LIMITED = "linkLimited"
     }
 }

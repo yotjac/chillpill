@@ -354,6 +354,7 @@ fun SettingsScreen(
                                             onFieldChange = { f, t -> viewModel.onPolicyFieldChanged(pkg, f, t) },
                                             onFieldFocusLost = { viewModel.onPolicyFieldFocusLost(pkg, it) },
                                             onExtensionChange = { viewModel.onPolicyExtensionToggled(pkg, it) },
+                                            onLinkPassChange = { viewModel.onPolicyLinkPassToggled(pkg, it) },
                                             modifier = Modifier.padding(top = 12.dp)
                                         )
                                     }

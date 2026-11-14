@@ -121,4 +121,19 @@ class TraceReplayTest {
             replay(TraceCodec.decodeInputs(f.readLines().asSequence()))
         }
     }
+
+    /**
+     * Device trace (2026-11-13): a link in WhatsApp opens X (com.twitter.android, link pass 4 min).
+     * WhatsApp moved between its own activities after a SystemUI back-gesture window; that window
+     * must not count as "came from the shade". Expected: the link picker, not the normal block.
+     */
+    @Test fun s7_linkFromWhatsApp_trace() {
+        val inputs = load("s7-link-from-whatsapp.jsonl")
+        val (core, effects) = replay(inputs)
+        assertEquals(
+            listOf(Effect.ShowBlock("com.twitter.android", BlockKind.LINK, linkMaxMs = 240_000L)),
+            effects.filterIsInstance<Effect.ShowBlock>()
+        )
+        assertEquals(BlockKind.LINK, (core.appState("com.twitter.android") as AppState.Blocking).kind)
+    }
 }

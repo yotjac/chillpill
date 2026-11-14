@@ -7,7 +7,8 @@ import kotlin.random.Random
 /**
  * Random input sequences: the invariants (checked by the harness after every step) must hold,
  * and a grace deadline may only move on Continue / "+10 s" / suggestion Restrict (I5). Configs mix
- * the three per-app modes and change them mid-session; a session keeps the rule it started with.
+ * the three per-app modes (with and without a link pass) and change them mid-session; a session
+ * keeps the rule it started with.
  */
 class EngineFuzzTest {
 
@@ -50,7 +51,13 @@ class EngineFuzzTest {
                     rules[p] != null && rules[p] != s.rule
                 ) fail("seed=$seed: session rule of $p changed ${rules[p]} -> ${s.rule} on $input")
                 val startedNow = before[p] != s.graceDeadline
-                if (startedNow && s.rule.mode == Mode.PICK && input is Input.ContinueTapped && input.pkg == p) {
+                if (startedNow && s.linkPass && input is Input.ContinueTapped && input.pkg == p) {
+                    val len = s.graceDeadline - input.at
+                    val max = maxOf(s.rule.linkPassMs ?: 0L, EngineCore.PICK_MIN_MS)
+                    if (len < EngineCore.PICK_MIN_MS || len > max || len % 60_000L != 0L) {
+                        fail("seed=$seed: link visit $len out of range on $input")
+                    }
+                } else if (startedNow && s.rule.mode == Mode.PICK && input is Input.ContinueTapped && input.pkg == p) {
                     val len = s.graceDeadline - input.at
                     if (len !in EngineCore.PICK_MIN_MS..EngineCore.PICK_MAX_MS || len % 60_000L != 0L) {
                         fail("seed=$seed: PICK length $len out of range on $input")
@@ -76,7 +83,7 @@ class EngineFuzzTest {
         val now = h.now
         val instance = h.instances[pkg] ?: 1L
         return when (r.nextInt(20)) {
-            0, 1, 2, 3 -> Input.Window(pkg, null, WindowKind.APP, now - r.nextLong(0, 500))
+            0, 1, 2, 3 -> Input.Window(pkg, null, WindowKind.APP, now - r.nextLong(0, 500), home = pkg == L && r.nextInt(4) != 0)
             4 -> if (r.nextBoolean()) Input.Window("com.android.systemui", null, WindowKind.SYSTEM_OVERLAY, now)
                  else Input.Window(pkg, "android.app.Dialog", WindowKind.APP_OVERLAY, now)
             5 -> Input.Window(OWN, null, WindowKind.OWN_BLOCK_UI, now)
@@ -107,7 +114,8 @@ class EngineFuzzTest {
                 fun rule() = AppRule(
                     Mode.values()[r.nextInt(3)],
                     r.nextLong(1, 4) * 30_000L,
-                    extensionAllowed = r.nextBoolean()
+                    extensionAllowed = r.nextBoolean(),
+                    linkPassMs = if (r.nextBoolean()) r.nextLong(1, 4) * 20_000L else null
                 )
                 val restricted = setOf(X, N, S).filter { r.nextInt(4) != 0 }
                 Input.ConfigChanged(Config(restricted.associateWith { rule() }, rule()), now)
