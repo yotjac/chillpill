@@ -443,18 +443,44 @@ class EngineCore {
         apps.entries.removeAll { (_, s) ->
             s is Session && s.graceOver && s.leftAt != null && t - s.leftAt >= RETURN_WINDOW_MS
         }
+        // Earliest first, whether it is a deadline or an idle reset, so a long gap between inputs
+        // ends each session the way it would have ended in real time.
         while (true) {
             var dueKey: String? = null
-            var dueDeadline = Long.MAX_VALUE
+            var dueAt = Long.MAX_VALUE
+            var dueIsIdle = false
             for ((pkg, state) in apps) {
-                if (state is Session && !state.graceOver && state.graceDeadline <= t && state.graceDeadline < dueDeadline) {
+                if (state !is Session) continue
+                if (!state.graceOver && state.graceDeadline <= t && state.graceDeadline < dueAt) {
                     dueKey = pkg
-                    dueDeadline = state.graceDeadline
+                    dueAt = state.graceDeadline
+                    dueIsIdle = false
+                }
+                val idleAt = state.idleResetAt
+                if (idleAt != null && idleAt <= t && idleAt < dueAt) {
+                    dueKey = pkg
+                    dueAt = idleAt
+                    dueIsIdle = true
                 }
             }
             val pkg = dueKey ?: return
-            expire(pkg, apps[pkg] as Session, out)
+            val state = apps[pkg] as Session
+            if (dueIsIdle) idleReset(pkg, state, out) else expire(pkg, state, out)
         }
+    }
+
+    /** When [IDLE_RESET_MS] away from the app ends this session (G4); null while the user is in it. */
+    private val Session.idleResetAt: Long? get() = leftAt?.let { it + IDLE_RESET_MS }
+
+    /**
+     * G4: the user has been away from [pkg] (another app, home, our own screens, screen off) for
+     * [IDLE_RESET_MS] in a row. Whatever was left of its grace, return window or link pass is
+     * dropped: the next entry goes through the block again.
+     */
+    private fun idleReset(pkg: String, state: Session, out: MutableList<Effect>) {
+        apps.remove(pkg)
+        // A PAUSE_ONLY session past its grace already recorded its expiry (G1).
+        if (!state.graceOver) out += Effect.RecordUsage(pkg, UsageKind.GRACE_EXPIRED_WHILE_AWAY)
     }
 
     private fun expire(pkg: String, state: Session, out: MutableList<Effect>) {
@@ -577,6 +603,7 @@ class EngineCore {
         for (state in apps.values) {
             if (state is Session && state.graceOver && state.leftAt != null) consider(state.leftAt + RETURN_WINDOW_MS)
             if (state is Session) state.extendedAt?.let { consider(it + EXTEND_CONFIRMATION_MS) }
+            if (state is Session) consider(state.idleResetAt)
             if (state is Session && !state.graceOver) {
                 consider(state.graceDeadline - WARNING_LEAD_MS)
                 consider(state.graceDeadline - FINAL_WARNING_LEAD_MS)
@@ -615,6 +642,11 @@ class EngineCore {
     companion object {
         /** PAUSE_ONLY apps: leaving for less than this never re-triggers the block screen. */
         const val RETURN_WINDOW_MS = 10_000L
+        /**
+         * G4: this long away from an app in a row ends its session: grace, return window and link
+         * pass no longer let the user back in without the block.
+         */
+        const val IDLE_RESET_MS = 2L * 60_000L
         /** The first warning (with "+10 s") appears this long before the deadline. */
         const val WARNING_LEAD_MS = 10_000L
         /** The non-dismissible final countdown appears this long before the deadline. */

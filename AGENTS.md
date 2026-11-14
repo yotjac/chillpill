@@ -82,6 +82,9 @@ them manually, or leave the verification step for the human.
   timestamps the exit for the 10 s return window of *Pause only* apps. Do
   not reintroduce "leaving refreshes grace": it let those apps skip the block forever (see
   `specs/no-reblock-apps-session-fix.md`).
+- **Idle reset (G4):** 2 min away from an app in a row (`IDLE_RESET_MS`, screen off included) ends
+  its session in every mode, link passes too: the next entry blocks. Short absences do not add up;
+  only `leftAt` counts. Tests in `IdleResetTest`.
 - A restricted app's own window events in the first 2 s after its block appears (splash → main)
   are absorbed; later ones, and anything reached through the shade, count. Getting past a block is
   caught by the block activity's `BlockStopped` / `BlockClosed` — this must work **without usage

@@ -379,6 +379,10 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
 - Entering a restricted app: grace valid → allow; PAUSE_ONLY app back within 10 s → allow;
   otherwise block. Leaving never moves a deadline (I5). Grace expiry: PAUSE_ONLY → `graceOver`,
   session stays; TIME_LIMIT / PICK app in front → re-intervention; away → Idle.
+- **Idle reset (G4):** a session whose app has been left (`leftAt`) for `IDLE_RESET_MS` (2 min) in a
+  row ends → Idle (`GRACE_EXPIRED_WHILE_AWAY` unless already `graceOver`), whatever grace, return
+  window or link pass was left, so the next entry blocks. Screen off counts as away. `advanceTo`
+  processes deadlines and idle resets earliest first; `nextWakeUp` includes `leftAt + 2 min`.
 - **Link pass (L1 / L2, `specs/link-pass.md`):** an entry seen through a window event, that would
   otherwise block (E2 / E8), whose previous presence was another app's activity (`APP`, not a
   home app: `Input.Window.home` / `ProbeResult.home` → `Presence.home`, screen on) with no SystemUI

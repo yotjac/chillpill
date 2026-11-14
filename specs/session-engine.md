@@ -263,6 +263,7 @@ evaluated against presence *as it was at the deadline*:
 | G1 | no-reblock | `graceOver = true`, `RecordUsage(GRACE_EXPIRED_WHILE_ACTIVE / _AWAY)`; session stays (E7 still applies) |
 | G2 | re-intervention, presence == X, screen on | `Blocking(RE_INTERVENTION)`, `ShowBlock`, `RecordUsage(OPEN_ATTEMPT)` + `GRACE_EXPIRED_WHILE_ACTIVE` |
 | G3 | re-intervention, otherwise | Idle, `RecordUsage(GRACE_EXPIRED_WHILE_AWAY)`; follow-up probes (P7) |
+| G4 | any `Session` with `leftAt != null` and `at - leftAt ≥ 2 min` (added 2026-11-14) | Idle, `RecordUsage(GRACE_EXPIRED_WHILE_AWAY)` unless `graceOver`; any mode, link passes too. Screen off counts as away. Deadlines and G4 are processed earliest first; `leftAt + 2 min` is a wake-up |
 
 G2 and the pill read the **same** presence value. That is the structural fix for S2: the pill
 cannot be gated on one belief while expiry uses another.
