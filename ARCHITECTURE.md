@@ -139,11 +139,12 @@ app/src/test/java/com/chillpill/service/engine/LinkPassTest.kt           Engine 
     ├── appblock/
     │   ├── AppBlockScreen.kt          Block screen composable (fill reveals the attempts text, continue/go-home, background image)
     │   ├── AppBlockViewModel.kt       Per-app wait timer (opening / time's up), picker state, event recording
-    │   └── DurationPicker.kt          "How long do you need?" slider + quick chips for Pick your time apps
+    │   └── DurationPicker.kt          "How long do you need?" slider with −/+ 1 min buttons + quick chips for Pick your time apps
     ├── reintervention/
     │   └── ReInterventionScreen.kt    Re-intervention composable (animated fill, cyan app name, go-home + keep-using)
     ├── common/
-    │   └── AppIcon.kt                 Reusable composable: displays an app's icon
+    │   ├── AppIcon.kt                 Reusable composable: displays an app's icon
+    │   └── AppIconBadge.kt            The target app's icon in a circle, top of the waiting screens
     ├── home/
     │   ├── HomeScreen.kt              Dashboard: greeting, today's stats, restricted apps, nav cards
     │   └── HomeViewModel.kt           Permissions check, today's attempt/entered stats
@@ -446,7 +447,8 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
   **Cosmetic only** — no timers, no session logic.
 - `AppBlockActivity` / `ReInterventionActivity` + `AppBlockViewModel`: wait timer and UI (the
   app's opening wait, or its time's-up wait on a re-intervention; PICK apps show `DurationPicker`
-  after it); send `ContinueTapped` (with `chosenMs` for PICK), `BlockClosed(GO_HOME | BACK |
+  after it, with −/+ one-minute buttons; both screens show the target app's `AppIconBadge` at the
+  top — specs/waiting-screen-polish.md); send `ContinueTapped` (with `chosenMs` for PICK), `BlockClosed(GO_HOME | BACK |
   SYSTEM_GESTURE)`, `BlockStarted/Stopped`, and launch the target app after Continue.
 
 ---

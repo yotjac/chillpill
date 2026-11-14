@@ -29,8 +29,10 @@
     <string name="pick_another_round">take another round?</string>
     <string name="pick_minutes">%1$d min</string>
     <string name="pick_open_for">open for %1$d min</string>
-    <string name="pick_minutes_none">— min</string>
+    <string name="pick_minutes_none">—</string>
     <string name="pick_choose_first">pick a time</string>
+    <string name="pick_minus_one">1 minute less</string>
+    <string name="pick_plus_one">1 minute more</string>
     <string name="pick_need_longer">need longer?</string>
     <string name="pick_shorter_range">back to 1–%1$d min</string>
 

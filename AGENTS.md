@@ -18,8 +18,8 @@ Room). No network layer, no DI framework. Unit tests cover the pure session engi
    all of it before any change to `service/`.
 3. `.agents/skills/<name>/SKILL.md` — task-specific procedures. Load only the ones that
    match the task (see list below). Do not load skills that are irrelevant.
-4. `specs/` — one spec per feature (Proposal / Design / Tasks). Shipped specs stay as
-   decision records; read the matching spec before modifying a feature that has one.
+4. `specs/` — design records for past features (Proposal / Design / Tasks). Read the
+   matching spec before modifying a feature that has one. Writing a new spec is optional.
 5. `docs/plans/` — older implementation plans kept for history.
 
 Skills available in `.agents/skills/`:
@@ -36,11 +36,6 @@ Skills available in `.agents/skills/`:
 
 ## Workflow rules
 
-- **Spec first.** Before implementing any new or modified feature, write
-  `specs/<feature-name>.md` with `## Proposal`, `## Design`, `## Tasks` (checklist of
-  `- [ ]` items). If the Design makes UI decisions, include a visual demo. Get the spec
-  reviewed, then implement from `## Tasks`, checking items off. If a feature changes
-  later, update its spec first. Do not write implementation code before the spec exists.
 - **Check skills first.** Look at the table above and load the matching skill(s) before
   starting. Skip the rest.
 - **Keep the map current.** If you add, remove, rename or move a file, or change a data
@@ -69,7 +64,7 @@ absent, release builds are unsigned; that is expected on agent machines.
 The interesting behaviour (blocking, grace, re-intervention, suggestions) only runs on a
 real device or emulator with the accessibility service and usage-access permission
 enabled. It cannot be exercised from a unit test today, so for changes in `service/` or
-the block/re-intervention activities, describe in the PR/spec exactly how you verified
+the block/re-intervention activities, describe in the PR exactly how you verified
 them manually, or leave the verification step for the human.
 
 ## Gotchas (things that have bitten before)

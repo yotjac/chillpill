@@ -53,6 +53,7 @@ import com.chillpill.R
 import com.chillpill.data.settings.BlockBackground
 import com.chillpill.data.settings.BlockBackgroundStore
 import com.chillpill.data.settings.BlockBackgrounds
+import com.chillpill.ui.common.AppIconBadge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -154,6 +155,8 @@ fun AppBlockScreen(
     openCount24h: Int?,
     isReIntervention: Boolean,
     appName: String,
+    /** The target app: its icon is shown at the top for the whole wait. */
+    packageName: String,
     background: BlockBackground?,
     onContinue: () -> Unit,
     onGoHome: () -> Unit,
@@ -280,27 +283,32 @@ fun AppBlockScreen(
                     )
                 }
                 if (pick != null && showCompleted) {
-                    // Centred in the space the attempts text had.
-                    DurationPicker(
-                        title = if (pick.limit != null) {
-                            stringResource(R.string.pick_link_title, appName)
-                        } else {
-                            stringResource(R.string.pick_title)
-                        },
-                        minutes = pick.minutes,
-                        extended = pick.extended,
-                        onMinutesChange = pick.onMinutesChange,
-                        onToggleRange = pick.onToggleRange,
-                        limit = pick.limit
-                    )
-                    if (pick.limited && pick.limit != null) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = stringResource(R.string.pick_link_limited, appName, pick.limit),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-                            textAlign = TextAlign.Center
+                    // Centred in the space the attempts text had, nudged a little lower.
+                    Column(
+                        modifier = Modifier.padding(top = PickerTopOffset),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        DurationPicker(
+                            title = if (pick.limit != null) {
+                                stringResource(R.string.pick_link_title, appName)
+                            } else {
+                                stringResource(R.string.pick_title)
+                            },
+                            minutes = pick.minutes,
+                            extended = pick.extended,
+                            onMinutesChange = pick.onMinutesChange,
+                            onToggleRange = pick.onToggleRange,
+                            limit = pick.limit
                         )
+                        if (pick.limited && pick.limit != null) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = stringResource(R.string.pick_link_limited, appName, pick.limit),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
             }
@@ -348,5 +356,13 @@ fun AppBlockScreen(
                 }
             }
         }
+
+        // On top of everything and outside the clipped reveal: visible for the whole wait.
+        AppIconBadge(
+            packageName = packageName,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 80.dp)
+        )
     }
 }

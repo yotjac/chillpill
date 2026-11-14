@@ -99,6 +99,7 @@ class ReInterventionActivity : ComponentActivity() {
                     phase = phase,
                     progress = progress,
                     appName = appName,
+                    packageName = packageName,
                     onContinue = viewModel::onContinue,
                     onGoHome = viewModel::onGoHome,
                     pick = rememberPickState(viewModel)

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waiting-screen polish — visual demo</title>
+<style>
+  :root { --ink:#1e293b; --muted:#64748b; --surface:#ffffff; --primary:#0d9488; --tonal:#ccfbf1; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:system-ui,Roboto,sans-serif; background:#e9edf1; color:var(--ink); padding:24px 16px; }
+  h1 { font-size:18px; margin:0 0 4px; } p.lead { margin:0 0 20px; color:var(--muted); font-size:14px; max-width:760px; }
+  .row { display:flex; flex-wrap:wrap; gap:28px; } .col { display:flex; flex-direction:column; gap:8px; }
+  .cap { font-size:12px; color:var(--muted); max-width:300px; }
+  .frame { width:300px; height:620px; border-radius:28px; position:relative; overflow:hidden; border:6px solid #111; box-shadow:0 8px 30px rgba(0,0,0,.18);
+           background:linear-gradient(160deg,#5b7a6e,#2f4a55 60%,#1c2b33); }
+  .frame.black { background:#000; }
+  .fill { position:absolute; left:0; right:0; bottom:0; background:rgba(255,255,255,.88); }
+  .black .fill { background:#fff; }
+  .badge { position:absolute; top:48px; left:50%; transform:translateX(-50%); width:72px; height:72px; border-radius:50%; background:var(--surface);
+           box-shadow:0 3px 10px rgba(0,0,0,.25); display:flex; align-items:center; justify-content:center; z-index:3; }
+  .icon { width:48px; height:48px; border-radius:14px; background:radial-gradient(circle at 30% 110%,#fdc468,#df4996 55%,#7d3cc8); position:relative; }
+  .icon::after { content:""; position:absolute; inset:11px; border:3px solid #fff; border-radius:50%; }
+  .content { position:absolute; inset:48px 24px; display:flex; flex-direction:column; z-index:2; }
+  .mid { flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; }
+  .big { font-size:56px; font-weight:800; } .sub { font-size:15px; font-weight:500; }
+  .btn { height:48px; border-radius:16px; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:500; margin-top:12px; }
+  .obtn { height:48px; display:flex; align-items:center; justify-content:center; color:var(--primary); font-weight:500; }
+  .obtn.off { color:#9aa5b1; }
+  .picker { padding-top:48px; width:100%; display:flex; flex-direction:column; align-items:center; }
+  .title { font-size:15px; font-weight:500; } .mins { font-size:34px; font-weight:800; margin:2px 0 4px; }
+  .srow { display:flex; align-items:center; width:100%; gap:2px; }
+  .pm { width:40px; height:40px; border-radius:50%; border:none; background:transparent; font-size:24px; color:var(--ink); cursor:pointer; flex:none; }
+  .pm:disabled { color:#cbd5e1; cursor:default; } .pm:not(:disabled):hover { background:#0001; }
+  input[type=range] { flex:1; accent-color:var(--primary); }
+  .chips { display:flex; gap:6px; width:100%; margin-top:4px; }
+  .chip { flex:1; text-align:center; border:1px solid #cbd5e1; border-radius:8px; padding:6px 0; font-size:13px; cursor:pointer; }
+  .chip.on { background:var(--tonal); border-color:var(--primary); }
+  .longer { font-size:13px; color:var(--primary); margin-top:8px; }
+  .guide { position:absolute; left:0; right:0; border-top:1px dashed #f43f5e88; z-index:4; }
+  .red { font-size:28px; font-weight:700; } .appn { font-size:44px; font-weight:700; color:var(--primary); margin:8px 0; }
+</style>
+</head>
+<body>
+<h1>Waiting-screen polish</h1>
+<p class="lead">App icon badge centred near the top of every waiting screen; picker moved 24 dp lower (dashed line = old centre); − / + change the length by one minute. The ± buttons and chips work here.</p>
+<div class="row">
+  <div class="col">
+    <div class="frame"><div class="fill" style="height:45%"></div><div class="badge"><div class="icon"></div></div>
+      <div class="content" style="clip-path:inset(55% 0 0 0)"><div class="mid"><div class="big">7</div><div class="sub">attempts to open Instagram in the last 24 h</div></div>
+        <div style="visibility:hidden"><div class="btn">Home</div><div class="obtn">Continue</div></div></div></div>
+    <div class="cap">Block screen during the wait: the badge is visible from the first frame, above the background and the rising fill.</div>
+  </div>
+  <div class="col">
+    <div class="frame"><div class="fill" style="height:100%"></div><div class="badge"><div class="icon"></div></div>
+      <div class="content"><div class="mid">
+        <div class="picker" id="p">
+          <div class="title">how long do you need?</div><div class="mins" id="m">— min</div>
+          <div class="srow"><button class="pm" id="minus" aria-label="1 minute less">−</button><input type="range" id="s" min="1" max="30" value="1"><button class="pm" id="plus" aria-label="1 minute more">+</button></div>
+          <div class="chips" id="chips"></div><div class="longer">need longer?</div>
+        </div></div>
+        <div><div class="btn">Home</div><div class="obtn off" id="open">pick a time</div></div></div></div>
+    <div class="cap">Pick your time, after the wait. Starts empty; − or + from empty picks 1 min. − is disabled at 1, + at the max.</div>
+  </div>
+  <div class="col">
+    <div class="frame black"><div class="fill" style="height:60%"></div><div class="badge"><div class="icon"></div></div>
+      <div class="content"><div class="mid"><div class="red">still using</div><div class="appn">Instagram</div><div class="red">? here's your chance to stop</div></div>
+        <div><div class="btn">Home</div><div class="obtn" style="visibility:hidden">Keep using</div></div></div></div>
+    <div class="cap">Re-intervention (time's up): same badge on the black screen.</div>
+  </div>
+</div>
+<script>
+  let v = null; const max = 30, quick = [1,5,10,15,20];
+  const s = document.getElementById('s'), m = document.getElementById('m'), minus = document.getElementById('minus'),
+        plus = document.getElementById('plus'), open = document.getElementById('open'), chips = document.getElementById('chips');
+  quick.forEach(q => { const c = document.createElement('div'); c.className='chip'; c.textContent=q; c.onclick=()=>set(q); chips.appendChild(c); });
+  function set(x){ v = Math.max(1, Math.min(max, x)); render(); }
+  function render(){
+    m.textContent = v == null ? '— min' : v + ' min'; s.value = v ?? 1;
+    minus.disabled = v != null && v <= 1; plus.disabled = v != null && v >= max;
+    open.textContent = v == null ? 'pick a time' : 'open for ' + v + ' min'; open.className = 'obtn' + (v == null ? ' off' : '');
+    [...chips.children].forEach((c,i)=>c.classList.toggle('on', quick[i]===v));
+  }
+  minus.onclick = () => set(v == null ? 1 : v - 1); plus.onclick = () => set(v == null ? 1 : v + 1);
+  s.oninput = () => set(+s.value); render();
+</script>
+</body>
+</html>

@@ -109,6 +109,7 @@ class AppBlockActivity : ComponentActivity() {
                     openCount24h = openCount24h,
                     isReIntervention = viewModel.isReIntervention,
                     appName = appName,
+                    packageName = packageName,
                     background = background,
                     onContinue = viewModel::onContinue,
                     onGoHome = viewModel::onGoHome,

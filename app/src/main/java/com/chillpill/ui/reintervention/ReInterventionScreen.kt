@@ -31,12 +31,16 @@ import com.chillpill.R
 import com.chillpill.ui.appblock.AppBlockPhase
 import com.chillpill.ui.appblock.DurationPicker
 import com.chillpill.ui.appblock.PickState
+import com.chillpill.ui.appblock.PickerTopOffset
+import com.chillpill.ui.common.AppIconBadge
 
 @Composable
 fun ReInterventionScreen(
     phase: AppBlockPhase,
     progress: Float,
     appName: String,
+    /** The target app: its icon is shown at the top. */
+    packageName: String,
     onContinue: () -> Unit,
     onGoHome: () -> Unit,
     modifier: Modifier = Modifier,
@@ -112,8 +116,10 @@ fun ReInterventionScreen(
                         textAlign = TextAlign.Center
                     )
                 } else if (pick != null) {
-                    // Another round: replaces the text once the time's-up wait is over, centred.
+                    // Another round: replaces the text once the time's-up wait is over, centred and
+                    // nudged a little lower.
                     DurationPicker(
+                        modifier = Modifier.padding(top = PickerTopOffset),
                         title = stringResource(R.string.pick_another_round),
                         minutes = pick.minutes,
                         extended = pick.extended,
@@ -165,5 +171,12 @@ fun ReInterventionScreen(
                 }
             }
         }
+
+        AppIconBadge(
+            packageName = packageName,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 80.dp)
+        )
     }
 }
