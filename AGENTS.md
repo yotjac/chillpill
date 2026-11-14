@@ -54,6 +54,7 @@ Gradle wrapper is checked in. On Windows use `gradlew.bat` instead of `./gradlew
 ```bash
 ./gradlew assembleDebug          # build
 ./gradlew installDebug           # install on the connected device/emulator
+./gradlew installMinified        # R8-minified, non-debuggable release build, debug-signed (no run-as)
 ./gradlew lintDebug              # Android lint
 ./gradlew testDebugUnitTest      # unit tests (app/src/test: engine scenarios + fuzz, classifier, foreground resolver, trace replay, settings)
 ```

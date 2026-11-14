@@ -60,6 +60,15 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += "release"
         }
+        // Release as shipped (R8 fully optimizing, not debuggable), signed with the debug key so it
+        // installs over adb without keystore.properties: `gradlew installMinified`.
+        // Not debuggable, so `adb run-as` (trace pulls) does not work on it; use staging for that.
+        create("minified") {
+            initWith(getByName("release"))
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
