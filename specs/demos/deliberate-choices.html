@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Deliberate choices — demo</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#222;color:#eee;display:flex;gap:32px;padding:32px;flex-wrap:wrap}
+.phone{width:320px;background:#111;border-radius:24px;padding:20px;box-sizing:border-box}
+.card{background:#fff;color:#111;border-radius:20px;padding:20px;text-align:center}
+h3{margin:4px 0 8px}button{width:100%;height:44px;border-radius:12px;font-size:15px;margin-top:10px;cursor:pointer}
+.p{background:#5b4bd6;color:#fff;border:0}.o{background:#fff;border:1px solid #888}
+.t{background:none;border:0;color:#5b4bd6;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px}
+.t:disabled,.open:disabled{color:#999;cursor:default}
+svg circle{fill:none;stroke-width:3}
+.big{font-size:40px;font-weight:800;margin:4px 0}
+.chips{display:flex;gap:6px}.chips span{flex:1;border:1px solid #666;border-radius:8px;padding:6px 0;cursor:pointer}
+.chips span.on{background:#5b4bd6;border-color:#5b4bd6}
+.open{background:#333;color:#fff;border:0}
+</style></head><body>
+<div class="phone"><div class="card">
+<h3>Restrict Instagram?</h3><div>You've spent a while here today.</div>
+<button class="p">Add to restricted</button><button class="o">Not now</button>
+<button class="t" id="never" disabled><svg id="ring" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" stroke="#ddd"/><circle id="arc" cx="8" cy="8" r="6.5" stroke="#5b4bd6" stroke-dasharray="40.8" stroke-dashoffset="40.8" transform="rotate(-90 8 8)"/></svg>Never ask me again about Instagram</button>
+<button class="o" onclick="startRing()" style="height:32px;font-size:12px">replay</button>
+</div></div>
+<div class="phone" style="text-align:center">
+<div>how long do you need?</div><div class="big" id="val">— min</div>
+<input type="range" min="1" max="30" value="1" id="sl" style="width:100%">
+<div class="chips" id="chips"></div>
+<button class="open" id="open" disabled>pick a time</button>
+</div>
+<script>
+function startRing(){const b=document.getElementById('never'),a=document.getElementById('arc'),r=document.getElementById('ring');
+b.disabled=true;r.style.display='';const t0=performance.now();
+(function f(t){const p=Math.min(1,(t-t0)/4000);a.style.strokeDashoffset=40.8*(1-p);if(p<1)requestAnimationFrame(f);else{b.disabled=false;r.style.display='none'}})(t0)}
+startRing();
+const chips=document.getElementById('chips');[5,10,15,20,25,30].forEach(q=>{const s=document.createElement('span');s.textContent=q;s.onclick=()=>set(q);chips.appendChild(s)});
+function set(m){document.getElementById('sl').value=m;document.getElementById('val').textContent=m+' min';
+const o=document.getElementById('open');o.disabled=false;o.textContent='open for '+m+' min';
+[...chips.children].forEach(c=>c.classList.toggle('on',+c.textContent===m))}
+document.getElementById('sl').oninput=e=>set(+e.target.value);
+</script></body></html>

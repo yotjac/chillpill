@@ -150,11 +150,13 @@ fun ReInterventionScreen(
                         .alpha(if (showKeepUsing) 1f else 0f),
                     shape = MaterialTheme.shapes.medium,
                     border = null,
-                    enabled = showKeepUsing
+                    // A Pick your time app opens only once a length has been picked.
+                    enabled = showKeepUsing && (pick == null || pick.minutes != null)
                 ) {
                     Text(
                         text = if (pick != null) {
-                            stringResource(R.string.pick_open_for, pick.minutes)
+                            pick.minutes?.let { stringResource(R.string.pick_open_for, it) }
+                                ?: stringResource(R.string.pick_choose_first)
                         } else {
                             stringResource(R.string.re_intervention_keep_using)
                         },

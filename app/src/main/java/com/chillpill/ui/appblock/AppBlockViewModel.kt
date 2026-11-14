@@ -62,9 +62,13 @@ class AppBlockViewModel(
     private val _instant = MutableStateFlow(false)
     val instant: StateFlow<Boolean> = _instant.asStateFlow()
 
-    /** Picker value in minutes; kept here so it survives rotation. */
-    private val _pickMinutes = MutableStateFlow(PICK_START_MINUTES)
-    val pickMinutes: StateFlow<Int> = _pickMinutes.asStateFlow()
+    /**
+     * Picker value in minutes; kept here so it survives rotation. Null until the user picks: a
+     * PICK app starts with nothing chosen and cannot be opened before (specs/deliberate-choices.md).
+     * The link picker starts at a value (set in [runWaitTimer]).
+     */
+    private val _pickMinutes = MutableStateFlow<Int?>(null)
+    val pickMinutes: StateFlow<Int?> = _pickMinutes.asStateFlow()
 
     /** Picker range: 1–30 min, or 1–90 after "need longer?". Resets with every new block screen. */
     private val _pickExtended = MutableStateFlow(false)
@@ -149,7 +153,7 @@ class AppBlockViewModel(
 
     fun onPickRangeToggled() {
         _pickExtended.value = !_pickExtended.value
-        _pickMinutes.value = _pickMinutes.value.coerceAtMost(pickMaxMinutes())
+        _pickMinutes.value = _pickMinutes.value?.coerceAtMost(pickMaxMinutes())
     }
 
     private fun pickMaxMinutes() = _pickLimit.value
@@ -161,7 +165,10 @@ class AppBlockViewModel(
      * is harmless).
      */
     fun onContinue() {
-        val chosenMs = if (_isPick.value) _pickMinutes.value * 60_000L else null
+        val picked = _pickMinutes.value
+        // The button is disabled until a length is picked; ignore a stray tap all the same.
+        if (_isPick.value && picked == null) return
+        val chosenMs = if (_isPick.value) picked!! * 60_000L else null
         app.sessionEngine.send(Input.ContinueTapped(packageName, SessionEngine.now(), chosenMs))
         viewModelScope.launch { _events.send(AppBlockEvent.RequestFinish) }
     }

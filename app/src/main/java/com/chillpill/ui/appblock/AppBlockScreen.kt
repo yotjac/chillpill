@@ -327,7 +327,8 @@ fun AppBlockScreen(
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedButton(
                     onClick = onContinue,
-                    enabled = showCompleted,
+                    // A Pick your time app opens only once a length has been picked.
+                    enabled = showCompleted && (pick == null || pick.minutes != null),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(56.dp)
@@ -337,7 +338,8 @@ fun AppBlockScreen(
                 ) {
                     Text(
                         text = if (pick != null) {
-                            stringResource(R.string.pick_open_for, pick.minutes)
+                            pick.minutes?.let { stringResource(R.string.pick_open_for, it) }
+                                ?: stringResource(R.string.pick_choose_first)
                         } else {
                             stringResource(R.string.block_continue_to_app)
                         },

@@ -38,7 +38,8 @@ import kotlin.math.roundToInt
 @Composable
 fun DurationPicker(
     title: String,
-    minutes: Int,
+    /** Null: nothing picked yet (no chip selected, thumb at the start). */
+    minutes: Int?,
     extended: Boolean,
     onMinutesChange: (Int) -> Unit,
     onToggleRange: () -> Unit,
@@ -56,7 +57,11 @@ fun DurationPicker(
         else -> AppBlockViewModel.PICK_QUICK_MINUTES
     }
     val haptics = LocalHapticFeedback.current
-    val minutesLabel = stringResource(R.string.pick_minutes, minutes)
+    val minutesLabel = if (minutes != null) {
+        stringResource(R.string.pick_minutes, minutes)
+    } else {
+        stringResource(R.string.pick_minutes_none)
+    }
 
     Column(modifier = modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
@@ -73,7 +78,7 @@ fun DurationPicker(
         )
         // A 1-minute limit leaves nothing to slide: the label and the chip say it all.
         if (max > 1) Slider(
-            value = minutes.toFloat(),
+            value = (minutes ?: 1).toFloat(),
             onValueChange = {
                 val v = it.roundToInt().coerceIn(1, max)
                 if (v != minutes) {
@@ -124,7 +129,8 @@ fun DurationPicker(
 
 /** What a block screen needs to show the picker; null for apps that are not PICK. */
 class PickState(
-    val minutes: Int,
+    /** Null until the user picks (PICK apps start empty). */
+    val minutes: Int?,
     val extended: Boolean,
     /** 0-s wait: no fill animation before the picker. */
     val instant: Boolean,

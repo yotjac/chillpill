@@ -183,7 +183,8 @@ data class AppPolicy(               // data/restricted/AppPolicy.kt
 - New phase `PICKING` (PICK mode) replaces `COMPLETED`. The picker contains:
   - The title *"How long do you need?"*.
   - A big live value ("10 min").
-  - A **slider 1–30 min** in 1-min steps, starting at 5 min.
+  - A **slider 1–30 min** in 1-min steps, starting with **nothing chosen** (amended 2026-11-14,
+    `specs/deliberate-choices.md`: Open is disabled until a length is picked).
   - A row of quick buttons **5 · 10 · 15 · 20 · 25 · 30**. A quick button only moves the slider;
     it does not open the app.
   - A **"Need longer?"** text button that switches to **1–90 min** (quick buttons 15 · 30 · 45 ·
