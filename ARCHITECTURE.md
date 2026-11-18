@@ -36,6 +36,7 @@ Key concepts:
 | **Re-intervention** | A second block shown when the grace period expires while the user is still in a Time limit / Pick your time app (Pick: the picker comes back after the wait) |
 | **Link pass** | Per app, off by default (`specs/link-pass.md`): when another app opens a restricted app (a link, a share), skip the wait and show the *link picker* ("how long do you need?", 1 min up to the app's longest link visit, default 10, max 90; only up to 2 min, with a note, if a link visit of that app started in the last 15 min); when the picked time runs out, the normal block |
 | **Confirmation wait** | Global wait before saving looser settings (default 10 s; lowering it is itself looser) |
+| **Reel finish** | Per app, off by default, Instagram only (`specs/reel-finish.md`): when time runs out in the middle of a reel that ends within 90 s, the block waits for the reel's end or the swipe to the next reel, whichever is first. Once per session; the pill says "Time's up after this reel" |
 | **Grace-expiry warning** | A small non-modal pill shown over the app for the last 10 s of a grace period, only for apps that get stopped (not Pause only). It offers one "+10 s" extension per grace window (unless the app's policy turns that off) and can be tapped away. Whenever that first warning is not showing (extension spent, tapped away), a countdown-only warning that cannot be dismissed appears for the last 5 s |
 | **Suggestion popup** | A dialog shown when a non-restricted, non-excluded app is opened and has accumulated >30 min of foreground time in the last 12 h (cumulative, not a single sitting); offers to restrict it |
 | **Excluded app** | An app that never triggers a suggestion popup — either hardcoded (browsers, utilities, etc.) or user-chosen via "Never ask me again about [app name]" |
@@ -120,6 +121,7 @@ com.chillpill/
 │   │   ├── ForegroundResolver.kt      Pure: UsageStats activity events -> resumed package (per activity, across queries)
 │   │   └── ProcessExitLogger.kt       Why the previous process died (API 30+), for the trace
 │   ├── ChillpillAccessibilityService.kt  Adapter: window/screen events in, pill + popup overlays out
+│   ├── ReelWatcher.kt                 Sensor: reads a reel viewer's seek bar / pager swipes while the engine asks (specs/reel-finish.md)
 │   ├── SuggestionEvaluator.kt         Whether an app qualifies for "restrict this?"; persists answers
 │   ├── ForegroundPackageQuery.kt      UsageStats query feeding ForegroundResolver: foreground package, its RESUME time, onlyResumed
 │   ├── SuggestionOverlayManager.kt     Hosts suggestion-popup via TYPE_ACCESSIBILITY_OVERLAY
@@ -391,6 +393,14 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
   a link visit of the app started < 15 min ago, `lastLinkPassAt`). Continue on it (A2b) starts `Session(linkPass = true)` for the picked
   length clamped to 1 min … `linkPassMs`. It runs out like Time limit, except that in front it shows the **initial** block (L2), whatever
   the mode. Probe-made entries, home apps, the shade and our own UI never qualify.
+- **Reel finish (R1–R4, `specs/reel-finish.md`):** `ReelProgress(pkg, remainingMs)` for the app in
+  front (session with `rule.finishReel`, not PAUSE_ONLY) is remembered as `Session.reelSeenAt` /
+  `reelEndsAt`. When the deadline is processed with the user in the app, a report at most 2.5 s old
+  for a reel ending within 90 s moves `graceDeadline` once to the reel's end + 0.5 s
+  (`reelHeld`; the only exception to I5) instead of blocking. `ReelSwiped` while held expires the
+  session at once; before the deadline it forgets the previous reel. Held sessions take no "+10 s".
+  `reelWatch(now)` tells the host when to look: the app in front, in the last 15 s of such a session
+  and during the hold. No report, a stale one or a long reel → block on time, as without the feature.
 - **Block screen lifecycle:** the activity reports `BlockStarted/Stopped/Closed` with an instance id
   (from `AppBlockViewModel.instance`). The app's own window events in the first 2 s after its block
   appears (splash → main) are absorbed. Getting past the block (shade → notification, recents,
@@ -400,8 +410,9 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
   re-block. `LEFT_APP` is recorded exactly once, by state.
 - **Derived state:** `warning(now)` (the pill: first warning with "+10 s" in the last 10 s unless
   extended or ×'d, otherwise a non-dismissible countdown in the last 5 s; only over the app in front,
-  never for PAUSE_ONLY; "+10 s" only if `rule.extensionAllowed`), `suggestion`, `graceActive()`,
-  `nextWakeUp(now)`.
+  never for PAUSE_ONLY; "+10 s" only if `rule.extensionAllowed`; during a reel hold a
+  non-dismissible countdown to the reel's end, `WarningUi.reelHold`), `suggestion`, `graceActive()`,
+  `reelWatch(now)`, `nextWakeUp(now)`.
 - `invariantViolations(now)` checks I1–I4; tests run it after every step, the host logs violations.
 
 ### 6.2 SessionEngine (host, `service/engine/SessionEngine.kt`)
@@ -411,7 +422,7 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
   thread-safe and never blocks. Inputs queue until the first config (`ChillpillApp.restrictions`
   mapped to `Config`, a hot flow over both DataStores) has been applied.
 - Executes effects off the engine thread (activities, Room, UsageStats, repositories).
-- Publishes `warning`, `suggestion`, `graceActive` as `StateFlow`s and keeps one wake-up timer at
+- Publishes `warning`, `suggestion`, `graceActive`, `reelWatch` as `StateFlow`s and keeps one wake-up timer at
   `nextWakeUp`. A late wake-up (deep sleep) is harmless: the next input processes overdue deadlines
   first, with the same outcome.
 - Also owns the `WindowClassifier` (with the IME-package cache and the cached
@@ -433,6 +444,14 @@ and render its outputs. Full design, rule ids (P*, E*, A*, G*) and invariants:
   accessibility service). Pill buttons send `ExtendTapped` / `WarningDismissed`; popup buttons send
   `SuggestionAnswered`. An accepted "+10 s" shows "10 s added" for 1.2 s (`WarningUi.extensionConfirmed`).
 - The suggestion popup never pauses event handling; it closes when the user leaves its app.
+- **Reel watcher** (`ReelWatcher`, `specs/reel-finish.md`): while `engine.reelWatch` names an app
+  with known view ids (Instagram: `clips_viewer_view_pager`, `scrubber`), the service adds
+  `TYPE_VIEW_SCROLLED` and `FLAG_REPORT_VIEW_IDS | FLAG_INCLUDE_NOT_IMPORTANT_VIEWS` to its
+  `serviceInfo`, and the watcher (a) reads the seek bar's `rangeInfo` once a second from
+  `rootInActiveWindow` and sends `ReelProgress` when two readings show it playing, (b) sends
+  `ReelSwiped` when a pager scroll event's `fromIndex` changes. A sensor only: it decides nothing
+  and reports nothing it is not sure of. Outside that window the service gets window-state events
+  only. This is why `canRetrieveWindowContent` is `true` in the service config.
 
 ### 6.4 Other adapters
 
@@ -519,6 +538,7 @@ All ViewModels expose state via `StateFlow` and screens collect it with
 - **Restricted apps** section on `SettingsScreen` shows each restricted app as an expandable `Card` with the app icon, label, a one-line policy summary (e.g. "Time limit · 12 s · 5 min") and an always-visible delete icon in the header row.
 - The entire card header is tappable and includes a chevron icon to indicate that it can expand for additional settings; only one app card is expanded at a time.
 - Expanding a card reveals the app's `PolicyEditor` (its saved policy, or the default) on a plain surface so it stays readable on a pending-tinted card (draft only until Save).
+- For apps in `ReelApps.PACKAGES` (Instagram) on Time limit / Pick your time, `PolicyEditor` adds the **"Let the current reel finish"** switch (`AppPolicy.finishReel`, `specs/reel-finish.md`); it is not a loosening, so it saves without the confirmation wait.
 - `PolicyEditor` ("When I open {app}"): three selectable mode rows, then only the selected mode's fields (`PolicyDraft.fields`): Pause only — wait when opening, free re-entry; Time limit — wait when opening, time allowed, wait when time's up, "+10 s" switch; Pick your time — wait when opening (0 allowed), wait before picking again, "+10 s" switch. Leaving Pick with a 0-s wait makes it 1 s. Below that, for every mode, "Opened from a link": a "Skip the wait for links" switch and, when on, "Longest link visit (minutes)" (1–90, default 10). Turning it on or lengthening it is looser (`isPolicyLooser`). The collapsed summary then ends in "· links ≤ N min".
 
 ### 7.4 Theme
@@ -621,7 +641,7 @@ Room allows main-thread queries (`allowMainThreadQueries()`) and uses
 | `res/values-v28/themes.xml` | `Theme.Chillpill.Block` with `windowLayoutInDisplayCutoutMode=shortEdges` so the fullscreen block windows are not letterboxed below the camera cutout |
 | `res/drawable-nodpi/block_activity_background.jpg` | Default block-screen background image. **nodpi** so Android does not treat it as mdpi and upscale it in memory |
 | `res/drawable/ic_launcher_foreground.xml` | Vector launcher foreground |
-| `res/xml/accessibility_service_config.xml` | AccessibilityService configuration |
+| `res/xml/accessibility_service_config.xml` | AccessibilityService configuration (`canRetrieveWindowContent="true"` for the reel watcher; event types and flags are set in code) |
 | `res/mipmap-anydpi-v26/ic_launcher.xml` | Adaptive icon definition |
 
 ---

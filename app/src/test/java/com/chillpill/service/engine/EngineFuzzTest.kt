@@ -6,7 +6,8 @@ import kotlin.random.Random
 
 /**
  * Random input sequences: the invariants (checked by the harness after every step) must hold,
- * and a grace deadline may only move on Continue / "+10 s" / suggestion Restrict (I5). Configs mix
+ * and a grace deadline may only move on Continue / "+10 s" / suggestion Restrict (I5), or once when
+ * a session starts waiting for a reel (R2, specs/reel-finish.md). Configs mix
  * the three per-app modes (with and without a link pass) and change them mid-session; a session
  * keeps the rule it started with.
  */
@@ -27,10 +28,21 @@ class EngineFuzzTest {
         val h = EngineHarness()
         h.autoProbe = r.nextBoolean()
         repeat(STEPS) {
-            h.advance(r.nextLong(0, 15_000))
-            val pkg = pkgs[r.nextInt(pkgs.size)]
+            // Now and then: a reel is reported right before a deadline, which is what starts a hold (R2).
+            val nearing = h.core.appStates.entries.firstOrNull { (_, st) ->
+                st is AppState.Session && st.rule.finishReel && !st.graceOver && st.leftAt == null
+            }?.key
+            val aim = nearing != null && r.nextInt(3) == 0
+            if (aim) {
+                val deadline = (h.core.appState(nearing!!) as AppState.Session).graceDeadline
+                h.advance(maxOf(0L, deadline - r.nextLong(1, 3_000) - h.now))
+            } else {
+                h.advance(r.nextLong(0, 15_000))
+            }
+            val pkg = if (aim) nearing!! else pkgs[r.nextInt(pkgs.size)]
             val before = deadlines(h)
-            val input = randomInput(r, h, pkg)
+            val heldBefore = h.core.appStates.filterValues { (it as? AppState.Session)?.reelHeld == true }.keys
+            val input = if (aim) Input.ReelProgress(pkg, r.nextLong(1, 90_000), h.now) else randomInput(r, h, pkg)
             try {
                 h.send(input)
                 if (!h.autoProbe && r.nextInt(3) == 0) {
@@ -69,8 +81,14 @@ class EngineFuzzTest {
             val after = deadlines(h)
             for ((p, d) in after) {
                 val old = before[p] ?: continue
+                val session = h.core.appStates[p] as AppState.Session
+                val holdStarted = session.reelHeld && p !in heldBefore
+                if (holdStarted && (!session.rule.finishReel || d <= old || d - old > EngineCore.REEL_HOLD_MAX_MS + EngineCore.REEL_END_SLACK_MS)) {
+                    fail("seed=$seed R2: hold of $p moved $old -> $d on $input")
+                }
+                if (p in heldBefore && d != old) fail("seed=$seed R2: held deadline of $p moved $old -> $d on $input")
                 val allowed = input is Input.ContinueTapped || input is Input.ExtendTapped ||
-                    input is Input.SuggestionAnswered
+                    input is Input.SuggestionAnswered || holdStarted
                 if (d != old && !allowed) fail("seed=$seed I5: deadline of $p moved $old -> $d on $input")
             }
         }
@@ -82,7 +100,7 @@ class EngineFuzzTest {
     private fun randomInput(r: Random, h: EngineHarness, pkg: String): Input {
         val now = h.now
         val instance = h.instances[pkg] ?: 1L
-        return when (r.nextInt(20)) {
+        return when (r.nextInt(23)) {
             0, 1, 2, 3 -> Input.Window(pkg, null, WindowKind.APP, now - r.nextLong(0, 500), home = pkg == L && r.nextInt(4) != 0)
             4 -> if (r.nextBoolean()) Input.Window("com.android.systemui", null, WindowKind.SYSTEM_OVERLAY, now)
                  else Input.Window(pkg, "android.app.Dialog", WindowKind.APP_OVERLAY, now)
@@ -110,12 +128,15 @@ class EngineFuzzTest {
             16 -> Input.WarningDismissed(pkg, now)
             17 -> Input.SuggestionEligible(pkg, "name", now)
             18 -> Input.SuggestionAnswered(pkg, SuggestionAnswer.values()[r.nextInt(3)], now)
+            19, 20 -> Input.ReelProgress(pkg, r.nextLong(-1_000, 120_000), now)
+            21 -> Input.ReelSwiped(pkg, now - r.nextLong(0, 300))
             else -> {
                 fun rule() = AppRule(
                     Mode.values()[r.nextInt(3)],
                     r.nextLong(1, 4) * 30_000L,
                     extensionAllowed = r.nextBoolean(),
-                    linkPassMs = if (r.nextBoolean()) r.nextLong(1, 4) * 20_000L else null
+                    linkPassMs = if (r.nextBoolean()) r.nextLong(1, 4) * 20_000L else null,
+                    finishReel = r.nextBoolean()
                 )
                 val restricted = setOf(X, N, S).filter { r.nextInt(4) != 0 }
                 Input.ConfigChanged(Config(restricted.associateWith { rule() }, rule()), now)

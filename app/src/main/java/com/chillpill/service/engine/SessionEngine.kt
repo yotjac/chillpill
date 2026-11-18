@@ -48,8 +48,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  *   activities and the overlays. Queued until the first config has been read, so no decision is
  *   ever made without config and no DataStore read happens inside one.
  * - Effects are executed here (activities, Room, UsageStats, repositories), off the engine thread.
- * - Outputs: [warning], [suggestion] and [graceActive] StateFlows, rendered by the accessibility
- *   service (overlays) and [GraceNotificationService].
+ * - Outputs: [warning], [suggestion], [graceActive] and [reelWatch] StateFlows, rendered by the
+ *   accessibility service (overlays, reel watcher) and [GraceNotificationService].
  * - One wake-up timer, always set to [EngineCore.nextWakeUp].
  * - Every input and effect goes to the trace in `filesDir/trace/` (see [EngineTrace]).
  *
@@ -81,6 +81,10 @@ class SessionEngine(private val app: ChillpillApp) {
     private val _graceActive = MutableStateFlow(false)
     /** True while any grace window runs; drives the ongoing notification. */
     val graceActive: StateFlow<Boolean> = _graceActive.asStateFlow()
+
+    private val _reelWatch = MutableStateFlow<String?>(null)
+    /** App whose reel viewer the accessibility service should follow right now, or null (specs/reel-finish.md). */
+    val reelWatch: StateFlow<String?> = _reelWatch.asStateFlow()
 
     private var timerJob: Job? = null
     private var timerAt: Long? = null
@@ -166,7 +170,7 @@ class SessionEngine(private val app: ChillpillApp) {
         }
         trace.append(TraceCodec.encodeInput(input, System.currentTimeMillis()))
         if (effects.isNotEmpty()) trace.append(TraceCodec.encodeEffects(input.at, effects))
-        if (input !is Input.Tick && input !is Input.Probe || effects.isNotEmpty()) {
+        if (input !is Input.Tick && input !is Input.Probe && input !is Input.ReelProgress || effects.isNotEmpty()) {
             Log.d(TAG, "$input -> $effects")
         }
         effects.forEach(::execute)
@@ -176,6 +180,7 @@ class SessionEngine(private val app: ChillpillApp) {
         core.invariantViolations(now).forEach { Log.e(TAG, "invariant violated: $it (after $input)") }
         _warning.value = core.warning(now)
         _suggestion.value = core.suggestion
+        _reelWatch.value = core.reelWatch(now)
         val graceActive = core.graceActive()
         // Started on every transition the engine itself sees, not from a (conflating) collector,
         // so a grace that ends and a new one that starts right after always get a start.

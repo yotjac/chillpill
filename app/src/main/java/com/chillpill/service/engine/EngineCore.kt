@@ -12,7 +12,8 @@ import java.util.TreeSet
  * - [handle] mutates state and returns the effects the host must execute. Derived UI state
  *   ([warning], [suggestion], [graceActive]) and the next wake-up are read after each call.
  *
- * Rule ids (P*, E*, A*, G*) refer to the spec; L* (link pass) to specs/link-pass.md.
+ * Rule ids (P*, E*, A*, G*) refer to the spec; L* (link pass) to specs/link-pass.md; R* (reel
+ * finish) to specs/reel-finish.md.
  */
 class EngineCore {
 
@@ -105,6 +106,8 @@ class EngineCore {
             is Input.ContinueTapped -> onContinue(input, out)
             is Input.ExtendTapped -> onExtend(input, out)
             is Input.WarningDismissed -> onWarningDismissed(input)
+            is Input.ReelProgress -> onReelProgress(input)
+            is Input.ReelSwiped -> onReelSwiped(input, out)
             is Input.SuggestionEligible -> onSuggestionEligible(input)
             is Input.SuggestionAnswered -> onSuggestionAnswered(input, out)
             is Input.Tick, is Input.ProcessStarted, is Input.ConfigChanged -> Unit
@@ -379,6 +382,7 @@ class EngineCore {
     private fun onExtend(input: Input.ExtendTapped, out: MutableList<Effect>) { // A5
         val state = apps[input.pkg] as? Session ?: return
         if (state.graceOver || input.at >= state.graceDeadline) return
+        if (state.reelHeld) return // R2: the hold is the extra time
         if (!state.rule.extensionAllowed || state.extensionsUsed >= MAX_GRACE_EXTENSIONS) return
         apps[input.pkg] = state.copy(
             graceDeadline = state.graceDeadline + GRACE_EXTENSION_MS,
@@ -411,6 +415,45 @@ class EngineCore {
     private fun onWarningDismissed(input: Input.WarningDismissed) { // A6
         val state = apps[input.pkg] as? Session ?: return
         apps[input.pkg] = state.copy(firstWarningDismissed = true)
+    }
+
+    // ---- reel finish (R1–R4, specs/reel-finish.md) ----------------------------------------
+
+    /** R1: remember that a reel is playing in the app in front, and when it ends. */
+    private fun onReelProgress(input: Input.ReelProgress) {
+        val state = apps[input.pkg] as? Session ?: return
+        if (!state.rule.finishReel || state.pauseOnly || state.graceOver || state.reelHeld) return
+        if (!presenceIs(input.pkg) || input.remainingMs < 0L) return
+        apps[input.pkg] = state.copy(reelSeenAt = input.at, reelEndsAt = input.at + input.remainingMs)
+    }
+
+    /**
+     * R3: a swipe to another reel. While held, that is the moment the hold was waiting for: the
+     * session expires now. Otherwise what was known about the previous reel no longer holds.
+     */
+    private fun onReelSwiped(input: Input.ReelSwiped, out: MutableList<Effect>) {
+        val state = apps[input.pkg] as? Session ?: return
+        if (!presenceIs(input.pkg) || state.graceOver) return
+        if (state.reelHeld) {
+            expire(input.pkg, state, out)
+        } else if (state.reelSeenAt != null) {
+            apps[input.pkg] = state.copy(reelSeenAt = null, reelEndsAt = null)
+        }
+    }
+
+    /**
+     * R2: [state] ran out of time with the user in the app. If a reel was seen playing just before
+     * and ends soon, the session with its deadline moved to the reel's end; else null. Once per
+     * session: the hold's own expiry, and a swipe, go through.
+     */
+    private fun reelHold(state: Session): Session? {
+        if (!state.rule.finishReel || state.pauseOnly || state.reelHeld) return null
+        val seenAt = state.reelSeenAt ?: return null
+        val endsAt = state.reelEndsAt ?: return null
+        if (state.graceDeadline - seenAt > REEL_FRESH_MS) return null
+        val left = endsAt - state.graceDeadline
+        if (left <= 0L || left > REEL_HOLD_MAX_MS) return null
+        return state.copy(graceDeadline = endsAt + REEL_END_SLACK_MS, reelHeld = true)
     }
 
     private fun onSuggestionEligible(input: Input.SuggestionEligible) { // A10
@@ -491,6 +534,12 @@ class EngineCore {
             return
         }
         val present = presenceIs(pkg)
+        if (present) {
+            reelHold(state)?.let { // R2: let the reel that is playing finish
+                apps[pkg] = it
+                return
+            }
+        }
         when {
             state.pauseOnly -> { // G1
                 apps[pkg] = state.copy(graceOver = true)
@@ -576,6 +625,10 @@ class EngineCore {
         if (state.pauseOnly || state.graceOver) return null
         val remaining = state.graceDeadline - now
         if (remaining <= 0L) return null
+        if (state.reelHeld) {
+            // R2: time is up, the reel is finishing. Shown for the whole hold, so the missing block is explained.
+            return WarningUi(pkg, state.graceDeadline, canExtend = false, dismissible = false, reelHold = true)
+        }
         val extendedAt = state.extendedAt
         if (extendedAt != null && now - extendedAt in 0 until EXTEND_CONFIRMATION_MS) {
             // "10 s added": the pill confirms an accepted extension for a moment.
@@ -589,6 +642,19 @@ class EngineCore {
                 WarningUi(pkg, state.graceDeadline, canExtend = false, dismissible = false)
             else -> null
         }
+    }
+
+    /**
+     * R4: the app whose reel viewer the host should follow right now, or null: the app in front,
+     * with a session that may be held for a reel, in the last [REEL_WATCH_LEAD_MS] of its time or
+     * during the hold. Outside that window nothing is sampled.
+     */
+    fun reelWatch(now: Long): String? {
+        val pkg = presence.pkg ?: return null
+        if (!presenceIs(pkg)) return null
+        val state = apps[pkg] as? Session ?: return null
+        if (!state.rule.finishReel || state.pauseOnly || state.graceOver) return null
+        return if (state.reelHeld || state.graceDeadline - now <= REEL_WATCH_LEAD_MS) pkg else null
     }
 
     /** True while any grace window is running (drives the ongoing notification). */
@@ -609,6 +675,7 @@ class EngineCore {
                 consider(state.graceDeadline - FINAL_WARNING_LEAD_MS)
                 consider(state.graceDeadline - PRE_DEADLINE_PROBE_MS)
                 consider(state.graceDeadline)
+                if (state.rule.finishReel) consider(state.graceDeadline - REEL_WATCH_LEAD_MS)
             }
         }
         consider(nextReconcileAt)
@@ -672,6 +739,15 @@ class EngineCore {
         const val BURST_PROBES = 4
         const val BURST_SPACING_MS = 400L
         val FOLLOW_UP_PROBE_DELAYS_MS = longArrayOf(300L, 1_000L)
+
+        /** R2: a reel that ends later than this after time ran out is not waited for. */
+        const val REEL_HOLD_MAX_MS = 90_000L
+        /** R2: "a reel is playing" must have been reported this recently when time runs out. */
+        const val REEL_FRESH_MS = 2_500L
+        /** R2: the block comes this long after the reel's reported end. */
+        const val REEL_END_SLACK_MS = 500L
+        /** R4: the host follows the reel viewer from this long before the deadline. */
+        const val REEL_WATCH_LEAD_MS = 15_000L
 
         private const val MINUTE_MS = 60_000L
         /** PICK: range of a visit the user can choose (whole minutes). */

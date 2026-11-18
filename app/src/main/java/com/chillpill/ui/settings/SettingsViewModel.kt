@@ -336,6 +336,10 @@ class SettingsViewModel(
     fun onPolicyLinkPassToggled(pkg: String, enabled: Boolean) =
         updateDraft(pkg) { it.copy(linkPass = enabled) }
 
+    /** "Let the current reel finish" (specs/reel-finish.md). */
+    fun onPolicyFinishReelToggled(pkg: String, enabled: Boolean) =
+        updateDraft(pkg) { it.copy(finishReel = enabled) }
+
     /** Digits only; above the maximum snaps to the maximum (below the minimum waits for focus loss). */
     fun onPolicyFieldChanged(pkg: String, field: PolicyField, text: String) = updateDraft(pkg) { draft ->
         val digits = text.filter { it.isDigit() }.take(6)

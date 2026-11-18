@@ -29,7 +29,8 @@ import kotlinx.coroutines.launch
  * state of its own:
  *
  * - **In:** every TYPE_WINDOW_STATE_CHANGED event, classified and timestamped, and the screen
- *   off / on / user-present broadcasts, are sent to [SessionEngine].
+ *   off / on / user-present broadcasts, are sent to [SessionEngine]. While the engine asks for it
+ *   (`reelWatch`), [ReelWatcher] also reports the reel playing in the app in front.
  * - **Out:** renders the engine's `warning` and `suggestion` as TYPE_ACCESSIBILITY_OVERLAY windows,
  *   which only an accessibility service may add. Their buttons send inputs back.
  *
@@ -65,13 +66,12 @@ class ChillpillAccessibilityService : AccessibilityService() {
     }
     private var screenReceiverRegistered = false
 
+    /** Sensor for specs/reel-finish.md; on only while `engine.reelWatch` names an app. */
+    private val reelWatcher: ReelWatcher by lazy { ReelWatcher(this, uiScope) { engine.send(it) } }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
-        serviceInfo = AccessibilityServiceInfo().apply {
-            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            packageNames = null // all packages; the engine decides what matters
-        }
+        applyServiceInfo()
         if (!screenReceiverRegistered) {
             ContextCompat.registerReceiver(
                 this,
@@ -89,6 +89,20 @@ class ChillpillAccessibilityService : AccessibilityService() {
         startRendering()
     }
 
+    /**
+     * Window state changes of all packages, always. Scroll events (and view ids) only while a
+     * reel viewer is being followed, so nothing extra is delivered the rest of the time.
+     */
+    private fun applyServiceInfo() {
+        val reels = reelWatcher.active
+        serviceInfo = AccessibilityServiceInfo().apply {
+            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or (if (reels) ReelWatcher.EVENT_TYPES else 0)
+            if (reels) flags = flags or ReelWatcher.FLAGS
+            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            packageNames = null // all packages; the engine decides what matters
+        }
+    }
+
     private fun startRendering() {
         if (renderJobs.any { it.isActive }) return
         renderJobs = listOf(
@@ -103,6 +117,13 @@ class ChillpillAccessibilityService : AccessibilityService() {
             },
             uiScope.launch {
                 engine.suggestion.collect { suggestion -> renderSuggestion(suggestion) }
+            },
+            uiScope.launch {
+                engine.reelWatch.collect { pkg ->
+                    val wasActive = reelWatcher.active
+                    reelWatcher.watch(pkg)
+                    if (reelWatcher.active != wasActive) applyServiceInfo()
+                }
             }
         )
     }
@@ -124,7 +145,12 @@ class ChillpillAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        if (event == null) return
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            reelWatcher.onScrolled(event)
+            return
+        }
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
         val className = event.className?.toString()
         val kind = engine.classifier.classify(pkg, className)
@@ -147,6 +173,7 @@ class ChillpillAccessibilityService : AccessibilityService() {
             }
             screenReceiverRegistered = false
         }
+        reelWatcher.watch(null)
         uiScope.cancel()
         renderJobs = emptyList()
         warningOverlay.dismissFromMainThread()

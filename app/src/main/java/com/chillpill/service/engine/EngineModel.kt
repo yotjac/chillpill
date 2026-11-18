@@ -73,8 +73,20 @@ data class AppRule(
      * Opened from another app (a link, a share): skip the wait and let the user pick a visit of
      * up to this long, then the normal block (specs/link-pass.md). Null = off.
      */
-    val linkPassMs: Long? = null
+    val linkPassMs: Long? = null,
+    /**
+     * When time runs out while a reel is playing in the app and it ends within
+     * [EngineCore.REEL_HOLD_MAX_MS], the block waits for the reel to end or for a swipe to the
+     * next one (specs/reel-finish.md). Only set for [ReelApps]; never applies to PAUSE_ONLY.
+     */
+    val finishReel: Boolean = false
 )
+
+/** Apps whose reel viewer the accessibility service can follow (specs/reel-finish.md). */
+object ReelApps {
+    const val INSTAGRAM = "com.instagram.android"
+    val PACKAGES: Set<String> = setOf(INSTAGRAM)
+}
 
 data class Config(
     /** Effective rule per restricted package (overrides already resolved against the defaults). */
@@ -151,7 +163,16 @@ sealed interface AppState {
          * A link pass (L1): let in without a wait; when it runs out in the app the normal block
          * follows (L2), whatever the mode. Never treated as PAUSE_ONLY.
          */
-        val linkPass: Boolean = false
+        val linkPass: Boolean = false,
+        /** When a reel was last seen playing in the app ([Input.ReelProgress]); null if not, or after a swipe. */
+        val reelSeenAt: Long? = null,
+        /** When that reel ends, as of [reelSeenAt]. */
+        val reelEndsAt: Long? = null,
+        /**
+         * R2: time ran out during a reel and [graceDeadline] was moved, once, to the reel's end.
+         * A swipe to the next reel ends the hold at once (R3). No "+10 s" while held.
+         */
+        val reelHeld: Boolean = false
     ) : AppState
 }
 
@@ -202,6 +223,14 @@ sealed interface Input {
     data class ExtendTapped(val pkg: String, override val at: Long) : Input
     data class WarningDismissed(val pkg: String, override val at: Long) : Input
 
+    /**
+     * A reel is playing in [pkg] and ends in [remainingMs] (the accessibility service samples the
+     * viewer's seek bar while [EngineCore.reelWatch] names the app; specs/reel-finish.md).
+     */
+    data class ReelProgress(val pkg: String, val remainingMs: Long, override val at: Long) : Input
+    /** The user moved to another reel in [pkg]. */
+    data class ReelSwiped(val pkg: String, override val at: Long) : Input
+
     data class SuggestionEligible(val pkg: String, val appName: String, override val at: Long) : Input
     data class SuggestionAnswered(val pkg: String, val answer: SuggestionAnswer, override val at: Long) : Input
 
@@ -235,7 +264,9 @@ data class WarningUi(
     val canExtend: Boolean,
     val dismissible: Boolean,
     /** Show "10 s added" instead of the countdown: an extension was just accepted. */
-    val extensionConfirmed: Boolean = false
+    val extensionConfirmed: Boolean = false,
+    /** Time is up; [deadline] is the end of the reel that is being allowed to finish (R2). */
+    val reelHold: Boolean = false
 )
 
 data class SuggestionUi(val pkg: String, val appName: String)

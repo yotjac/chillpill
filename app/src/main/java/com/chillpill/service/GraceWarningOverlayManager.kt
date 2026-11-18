@@ -114,6 +114,7 @@ class GraceWarningOverlayManager(
                             canExtend = current.canExtend,
                             dismissible = current.dismissible,
                             extensionConfirmed = current.extensionConfirmed,
+                            reelHold = current.reelHold,
                             onExtend = { onExtend(current.pkg) },
                             // The engine answers with a new warning (null, or the final countdown).
                             onDismiss = { onDismiss(current.pkg) },

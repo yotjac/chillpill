@@ -27,7 +27,8 @@ data class PolicyDraft(
     val minutes: String,
     val extensionAllowed: Boolean,
     val linkPass: Boolean = false,
-    val linkMinutes: String = AppPolicy.DEFAULT_LINK_PASS_MINUTES.toString()
+    val linkMinutes: String = AppPolicy.DEFAULT_LINK_PASS_MINUTES.toString(),
+    val finishReel: Boolean = false
 ) {
     fun text(field: PolicyField): String = when (field) {
         PolicyField.OPEN_WAIT -> openWait
@@ -66,7 +67,8 @@ data class PolicyDraft(
         minutes = value(PolicyField.MINUTES, fallback),
         extensionAllowed = extensionAllowed,
         linkPass = linkPass,
-        linkPassMinutes = value(PolicyField.LINK_MINUTES, fallback)
+        linkPassMinutes = value(PolicyField.LINK_MINUTES, fallback),
+        finishReel = finishReel
     ).sanitized()
 
     companion object {
@@ -77,7 +79,8 @@ data class PolicyDraft(
             minutes = p.minutes.toString(),
             extensionAllowed = p.extensionAllowed,
             linkPass = p.linkPass,
-            linkMinutes = p.linkPassMinutes.toString()
+            linkMinutes = p.linkPassMinutes.toString(),
+            finishReel = p.finishReel
         )
 
         fun range(field: PolicyField, mode: Mode): IntRange = when (field) {
@@ -119,6 +122,8 @@ internal fun isPolicyLooser(old: AppPolicy, new: AppPolicy): Boolean {
     if (new.openWaitSeconds < old.openWaitSeconds) return true
     // A link pass skips the wait: turning it on, or making it longer, lets the user in sooner.
     if (new.linkPass && (!old.linkPass || new.linkPassMinutes > old.linkPassMinutes)) return true
+    // "Let the current reel finish" is deliberately not looser: it only moves where a visit stops
+    // (specs/reel-finish.md), so turning it on saves without the confirmation wait.
     val oldMax = old.maxVisitMinutes()
     val newMax = new.maxVisitMinutes()
     return when {

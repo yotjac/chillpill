@@ -30,6 +30,8 @@ object TraceCodec {
         Input.ContinueTapped::class.java,
         Input.ExtendTapped::class.java,
         Input.WarningDismissed::class.java,
+        Input.ReelProgress::class.java,
+        Input.ReelSwiped::class.java,
         Input.SuggestionEligible::class.java,
         Input.SuggestionAnswered::class.java,
         Input.ConfigChanged::class.java,

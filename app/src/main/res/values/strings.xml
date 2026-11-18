@@ -38,13 +38,15 @@
 
     <!-- Services -->
     <string name="grace_notification_title">Chillpill – grace period</string>
-    <string name="accessibility_service_description">Chillpill uses this to detect when you open restricted apps and show a short wait screen.</string>
+    <string name="accessibility_service_description">Chillpill uses this to detect when you open restricted apps and show a short wait screen. If you turn on \"Let the current reel finish\" for an app, it also reads that app\'s reel progress bar on screen, in the last seconds of your time. Nothing leaves your device.</string>
 
     <!-- Grace-expiry warning pill -->
     <plurals name="grace_warning_countdown">
         <item quantity="one">Time\'s up in %1$d s</item>
         <item quantity="other">Time\'s up in %1$d s</item>
     </plurals>
+    <!-- Time is up; the reel that is playing may finish (specs/reel-finish.md). -->
+    <string name="grace_warning_reel">Time\'s up after this reel · %1$d s</string>
     <string name="grace_warning_extend">+10 s</string>
     <string name="grace_warning_extended">10 s added</string>
     <string name="grace_warning_extend_description">Add ten seconds</string>
@@ -128,6 +130,9 @@
     <string name="policy_summary_pause">%1$s · %2$d s · %3$d min re-entry</string>
     <string name="policy_summary_limit">%1$s · %2$d s · %3$d min</string>
     <string name="policy_summary_pick">%1$s · %2$d s</string>
+    <!-- Reel finish (specs/reel-finish.md). -->
+    <string name="policy_finish_reel">Let the current reel finish</string>
+    <string name="policy_finish_reel_description">If time runs out in the middle of a reel that ends within 90 seconds, the break waits for it to end, or for your next swipe.</string>
     <!-- Link pass (specs/link-pass.md). -->
     <string name="policy_link_title">Opened from a link</string>
     <string name="policy_link_switch">Skip the wait for links</string>

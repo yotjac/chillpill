@@ -49,6 +49,9 @@ fun PolicyEditor(
     onFieldFocusLost: (PolicyField) -> Unit,
     onExtensionChange: (Boolean) -> Unit,
     onLinkPassChange: (Boolean) -> Unit,
+    /** The app has a reel viewer Chillpill can follow: offer "Let the current reel finish". */
+    reelSupported: Boolean,
+    onFinishReelChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val effective = draft.toPolicy(original)
@@ -96,6 +99,30 @@ fun PolicyEditor(
                     modifier = Modifier.weight(1f)
                 )
                 Switch(checked = draft.extensionAllowed, onCheckedChange = onExtensionChange)
+            }
+            if (reelSupported) {
+                // specs/reel-finish.md
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val pending = draft.finishReel != original.finishReel
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(
+                            text = stringResource(R.string.policy_finish_reel),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (pending) PendingWaitLabelColor else Color.Unspecified
+                        )
+                        Text(
+                            text = stringResource(R.string.policy_finish_reel_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(checked = draft.finishReel, onCheckedChange = onFinishReelChange)
+                }
             }
         }
         LinkPassSection(

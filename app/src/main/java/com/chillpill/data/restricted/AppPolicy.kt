@@ -3,6 +3,7 @@ package com.chillpill.data.restricted
 import com.chillpill.service.engine.AppRule
 import com.chillpill.service.engine.Config
 import com.chillpill.service.engine.Mode
+import com.chillpill.service.engine.ReelApps
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 
@@ -28,13 +29,19 @@ data class AppPolicy(
      * (specs/link-pass.md).
      */
     val linkPass: Boolean = false,
-    val linkPassMinutes: Int = DEFAULT_LINK_PASS_MINUTES
+    val linkPassMinutes: Int = DEFAULT_LINK_PASS_MINUTES,
+    /**
+     * Time runs out in the middle of a reel that ends within 90 s: wait for it to end, or for
+     * the next swipe (specs/reel-finish.md). Only offered for [ReelApps]; TIME_LIMIT / PICK.
+     */
+    val finishReel: Boolean = false
 ) {
     fun toRule(): AppRule = AppRule(
         mode,
         minutes * 60_000L,
         extensionAllowed,
-        linkPassMs = if (linkPass) linkPassMinutes * 60_000L else null
+        linkPassMs = if (linkPass) linkPassMinutes * 60_000L else null,
+        finishReel = finishReel && mode != Mode.PAUSE_ONLY
     )
 
     /** Wait of a block screen: the opening one, or the re-intervention ("time's up") one. */
@@ -105,6 +112,7 @@ object AppPolicyCodec {
         addProperty("extension", p.extensionAllowed)
         addProperty("linkPass", p.linkPass)
         addProperty("linkMinutes", p.linkPassMinutes)
+        addProperty("finishReel", p.finishReel)
     }
 
     private fun fromJson(o: JsonObject): AppPolicy {
@@ -118,7 +126,8 @@ object AppPolicyCodec {
             minutes = int("minutes", d.minutes),
             extensionAllowed = try { o.get("extension")?.asBoolean ?: true } catch (_: Exception) { true },
             linkPass = try { o.get("linkPass")?.asBoolean ?: false } catch (_: Exception) { false },
-            linkPassMinutes = int("linkMinutes", d.linkPassMinutes)
+            linkPassMinutes = int("linkMinutes", d.linkPassMinutes),
+            finishReel = try { o.get("finishReel")?.asBoolean ?: false } catch (_: Exception) { false }
         ).sanitized()
     }
 }
@@ -181,7 +190,11 @@ object PolicyResolver {
     fun effective(pkg: String, overrides: Map<String, AppPolicy>): AppPolicy = overrides[pkg] ?: AppPolicy.DEFAULT
 
     fun config(restricted: Set<String>, overrides: Map<String, AppPolicy>): Config = Config(
-        rules = restricted.associateWith { effective(it, overrides).toRule() },
+        rules = restricted.associateWith { pkg ->
+            val rule = effective(pkg, overrides).toRule()
+            // The engine only ever holds for apps whose reel viewer can be followed.
+            if (rule.finishReel && pkg !in ReelApps.PACKAGES) rule.copy(finishReel = false) else rule
+        },
         defaultRule = AppPolicy.DEFAULT.toRule()
     )
 }

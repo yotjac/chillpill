@@ -8,6 +8,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import com.chillpill.data.restricted.AppPolicy
+import com.chillpill.service.engine.ReelApps
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Arrangement
@@ -355,6 +356,8 @@ fun SettingsScreen(
                                             onFieldFocusLost = { viewModel.onPolicyFieldFocusLost(pkg, it) },
                                             onExtensionChange = { viewModel.onPolicyExtensionToggled(pkg, it) },
                                             onLinkPassChange = { viewModel.onPolicyLinkPassToggled(pkg, it) },
+                                            reelSupported = pkg in ReelApps.PACKAGES,
+                                            onFinishReelChange = { viewModel.onPolicyFinishReelToggled(pkg, it) },
                                             modifier = Modifier.padding(top = 12.dp)
                                         )
                                     }

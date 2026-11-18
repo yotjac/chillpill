@@ -62,6 +62,8 @@ private val PillShape = RoundedCornerShape(22.dp)
  * @param deadlineMs `SystemClock.elapsedRealtime()` millis at which grace runs out.
  * @param canExtend false once the single extension has been used: countdown only, no button.
  * @param extensionConfirmed show "10 s added" (an extension was just accepted) instead of the countdown.
+ * @param reelHold time is up and the reel that is playing may finish: the countdown runs to its
+ *   end and says so (specs/reel-finish.md).
  * @param dismissible false for the second warning, shown once the extension has been spent: the
  *   dismiss button goes too, so the coming re-block is announced whatever the user tapped earlier.
  */
@@ -71,6 +73,7 @@ fun GraceWarningPill(
     canExtend: Boolean,
     dismissible: Boolean,
     extensionConfirmed: Boolean = false,
+    reelHold: Boolean = false,
     onExtend: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
@@ -140,6 +143,8 @@ fun GraceWarningPill(
         Text(
             text = if (justExtended) {
                 stringResource(R.string.grace_warning_extended)
+            } else if (reelHold) {
+                stringResource(R.string.grace_warning_reel, secondsLeft)
             } else {
                 pluralStringResource(R.plurals.grace_warning_countdown, secondsLeft, secondsLeft)
             },

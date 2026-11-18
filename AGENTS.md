@@ -114,6 +114,12 @@ them manually, or leave the verification step for the human.
   straight over another, non-home app's activity, no SystemUI window in between, seen through a
   window event). Keep it failing strict: when in doubt, block. A link-pass session is never
   PAUSE_ONLY and ends in the *initial* block, not re-intervention.
+- **Reel finish** (`specs/reel-finish.md`): the only thing that moves a deadline besides Continue /
+  "+10 s" is the one-time hold at expiry (`Session.reelHeld`), and only on a fresh `ReelProgress`
+  report. `ReelWatcher` is a sensor: it must stay silent whenever it is not sure (no seek bar, not
+  advancing, odd units), so every failure means "block on time". Its view ids are Instagram's
+  internals from one recording; when they change the feature goes quiet, it must never guess.
+  Keep the extra accessibility events and flags limited to the `reelWatch` window.
 - `GraceNotificationService` is cosmetic. Never put timers or session logic back into it.
 - Room is configured with `allowMainThreadQueries()` and
   `fallbackToDestructiveMigration()`. Bump the DB version when the schema changes; there
